@@ -1,0 +1,63 @@
+@import "./styles/theme.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  html,
+  body {
+    /* Off-canvas drawers (mobile nav / cart) sit translated fully out of
+       view; without this, browsers still count that off-screen position
+       toward the document's scrollable width and add a phantom horizontal
+       scrollbar. This is required for any off-canvas panel, not RTL-specific. */
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-brand-bg text-brand-text antialiased;
+    font-family: "Heebo", "Assistant", system-ui, sans-serif;
+  }
+
+  /* Thin, brand-colored scrollbar (webkit) */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-brand-bg;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-brand-border-strong rounded-full;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Add-to-cart confirmation toast (see Toast.tsx) — centered, so it scales
+     in rather than sliding from an edge. */
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  .animate-toast-in {
+    animation: toast-in 0.2s ease-out;
+  }
+}

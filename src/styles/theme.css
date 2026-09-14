@@ -1,0 +1,35 @@
+/**
+ * ============================================================
+ *  CENTRAL THEME — edit colors here ONLY.
+ * ============================================================
+ * Every color used across the site is defined once, right here,
+ * as an "R G B" triplet (no commas, no `rgb()`) so Tailwind can
+ * apply opacity via `bg-brand-gold/50` etc.
+ *
+ * To re-brand the store, change the values in :root below.
+ * Nothing else in the codebase should contain a raw hex color.
+ */
+
+:root {
+  /* Backgrounds */
+  --color-bg: 10 10 10;              /* primary page background — near-black */
+  --color-bg-secondary: 20 19 17;    /* header / footer / secondary panels */
+  --color-bg-elevated: 30 28 24;     /* cards, dropdowns, drawers, modals */
+
+  /* Borders */
+  --color-border: 47 44 38;          /* subtle dark gray-gold border */
+  --color-border-strong: 82 74 55;   /* emphasized border / dividers */
+
+  /* Brand gold accent */
+  --color-gold: 212 175 55;          /* primary accent (buttons, highlights) */
+  --color-gold-hover: 231 196 88;    /* hover / active gold */
+  --color-gold-muted: 138 114 45;    /* muted gold for subtle text/icons */
+
+  /* Text */
+  --color-text: 245 245 244;         /* primary text (near-white) */
+  --color-text-muted: 163 158 150;   /* secondary / helper text */
+
+  /* Status */
+  --color-danger: 220 80 70;
+  --color-success: 92 168 110;
+}

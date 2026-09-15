@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Hide-on-scroll-down / show-on-scroll-up behavior for a fixed header.
+ * Tracks scroll direction for "collapse on scroll-down, expand on
+ * scroll-up" UI (currently: the sticky category tabs row in
+ * `CategoryBrowser.tsx`, which hides while scrolling down and reappears
+ * while scrolling up, alongside the always-sticky business-info and
+ * subcategory rows).
  *
- * Returns `true` when the header should be hidden. Always visible at the
- * very top of the page. A small `threshold` (px) absorbs tiny scroll
- * jitter (e.g. mobile bounce/rubber-banding) so the header doesn't
+ * Returns `true` when the element should be collapsed/hidden. Always
+ * `false` at the very top of the page. A small `threshold` (px) absorbs
+ * tiny scroll jitter (e.g. mobile bounce/rubber-banding) so it doesn't
  * flicker on movements that aren't a deliberate scroll.
  */
-export function useSmartHeader(threshold = 8) {
+export function useScrollDirection(threshold = 8) {
   const [hidden, setHidden] = useState(false);
   const lastY = useRef(0);
   const frame = useRef(0);

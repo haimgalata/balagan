@@ -13,6 +13,12 @@ interface ProductSliderProps {
  * every breakpoint; the prev/next buttons (desktop only, real pointers have
  * room for them) are a convenience on top of that, not a replacement.
  *
+ * `--cards`/`--gap` (set here, read by `ProductCard`'s width `calc()`)
+ * control how many *whole* cards are visible per row at each breakpoint —
+ * see `ProductCard` for the full explanation. `--gap` must match this row's
+ * own `gap-*` classes exactly, or the math (and the "always a whole card"
+ * guarantee) breaks.
+ *
  * Scroll math assumes the modern, spec-compliant RTL `scrollLeft` behavior
  * (0 at the start/right edge, growing negative as content scrolls toward
  * the left) that current evergreen browsers implement.
@@ -35,7 +41,7 @@ export function ProductSlider({ products, emptyMessage = "לא נמצאו מוצ
     <div className="relative">
       <div
         ref={scrollerRef}
-        className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth pb-1 sm:gap-2.5"
+        className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth pb-1 [--cards:2] [--gap:0.5rem] sm:gap-2.5 sm:[--cards:3] sm:[--gap:0.625rem] md:[--cards:4] lg:[--cards:5] xl:[--cards:6]"
       >
         {products.map((product) => (
           <ProductCard key={product.id} product={product} />

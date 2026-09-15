@@ -1,32 +1,29 @@
-import { ArrowLeft, Package } from "lucide-react";
 import type { Category } from "@/types";
 
 interface CategoryCardProps {
   category: Category;
+  active: boolean;
+  onSelect: () => void;
 }
 
 /**
- * Homepage category button — pure navigation, no stats. Data-driven —
- * no category names hardcoded here.
+ * Homepage main-category tab — text only (no icon), toggles which
+ * category's products `CategoryBrowser` shows. Data-driven — no category
+ * names hardcoded here.
  */
-export function CategoryCard({ category }: CategoryCardProps) {
+export function CategoryCard({ category, active, onSelect }: CategoryCardProps) {
   return (
-    <a
-      href={`#${category.slug}`}
-      className="group flex items-center justify-between gap-3 rounded-lg border border-brand-border bg-brand-bg-elevated px-4 py-3 transition-colors hover:border-brand-gold"
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={active}
+      className={`shrink-0 whitespace-nowrap rounded-lg border px-4 py-2.5 text-sm font-bold transition-colors sm:text-base ${
+        active
+          ? "border-brand-gold bg-brand-gold text-brand-bg"
+          : "border-brand-border bg-brand-bg-elevated text-brand-text hover:border-brand-gold hover:text-brand-gold"
+      }`}
     >
-      <div className="flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-brand-bg text-brand-gold">
-          <Package size={16} />
-        </span>
-        <h3 className="text-sm font-bold text-brand-text group-hover:text-brand-gold sm:text-base">
-          {category.name}
-        </h3>
-      </div>
-      <ArrowLeft
-        size={16}
-        className="shrink-0 text-brand-text-muted transition-transform group-hover:-translate-x-1 group-hover:text-brand-gold"
-      />
-    </a>
+      {category.name}
+    </button>
   );
 }

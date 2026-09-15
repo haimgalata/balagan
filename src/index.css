@@ -9,12 +9,18 @@
     scroll-behavior: smooth;
   }
 
-  html,
-  body {
+  html {
     /* Off-canvas drawers (mobile nav / cart) sit translated fully out of
        view; without this, browsers still count that off-screen position
        toward the document's scrollable width and add a phantom horizontal
-       scrollbar. This is required for any off-canvas panel, not RTL-specific. */
+       scrollbar. This is required for any off-canvas panel, not RTL-specific.
+       `html` only, deliberately NOT `body` too: setting overflow-x on both
+       makes both compute overflow-y: auto (the CSS overflow-x/y coupling
+       quirk) and become independent scroll containers, which breaks
+       `position: sticky` for any descendant (its nearest scrolling ancestor
+       becomes the non-scrolling `body` box instead of the viewport) — see
+       `BusinessInfoBar.tsx`, the sticky element that surfaced this. `html`
+       alone is enough to hide the phantom scrollbar. */
     overflow-x: hidden;
   }
 

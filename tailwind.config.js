@@ -37,6 +37,16 @@ export default {
       fontFamily: {
         sans: ["Heebo", "Assistant", "system-ui", "sans-serif"],
       },
+      maxWidth: {
+        // Shared site content width (`max-w-container`), used by every
+        // section wrapper (Header, Hero, BusinessInfoBar, SecurePaymentBar,
+        // HomePage, Footer) instead of a bare Tailwind size, so the whole
+        // site's width caps in one place. 90rem/1440px reads as a modern
+        // "wide" desktop layout without feeling stretched on very large
+        // monitors; below that width (including every mobile/tablet size)
+        // it's a no-op and content already fills the viewport.
+        container: "90rem",
+      },
     },
   },
   plugins: [],

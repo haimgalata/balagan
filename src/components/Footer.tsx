@@ -4,7 +4,7 @@ import { Facebook, Instagram, Phone } from "lucide-react";
 export function Footer() {
   return (
     <footer className="border-t border-brand-border bg-brand-bg-secondary">
-      <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 py-6 text-center sm:px-6 sm:py-8">
+      <div className="mx-auto flex max-w-container flex-col items-center gap-4 px-4 py-6 text-center sm:px-6 sm:py-8">
         <p className="max-w-md text-sm leading-relaxed text-brand-text-muted">
           מרכז הסיגריות והטבק בלגן — חנות ותיקה למוצרי עישון וטבק.
         </p>

@@ -14,6 +14,14 @@ interface ProductCardProps {
  * product info here. Pack price is always derived from `unitPrice`
  * (see `src/lib/pricing.ts`), never stored separately.
  *
+ * Width is `calc((100% - var(--gap) * (var(--cards) - 1)) / var(--cards))`
+ * rather than a fixed size: `--cards` (how many full cards should be
+ * visible at once) and `--gap` (matching the row's actual flex `gap`) are
+ * CSS custom properties set responsively on `ProductSlider`'s scroller and
+ * inherited here. Because it's percentage-based, `--cards` full cards
+ * exactly fill the row's visible width at any viewport size — continuously,
+ * not just at breakpoints — with zero partial card peeking at the edge.
+ *
  * Both buttons just add units to the cart's single quantity for this
  * product (see `src/context/CartContext.tsx`) — "+ פקט" is only a
  * shortcut for adding `UNITS_PER_PACK` units at once, and never opens
@@ -25,7 +33,10 @@ export function ProductCard({ product }: ProductCardProps) {
   const packPrice = getPackPrice(product.unitPrice);
 
   return (
-    <div className="flex w-32 shrink-0 snap-start flex-col overflow-hidden rounded-lg border border-brand-border bg-brand-bg-elevated transition-colors hover:border-brand-border-strong md:w-36">
+    <div
+      className="flex shrink-0 snap-start flex-col overflow-hidden rounded-lg border border-brand-border bg-brand-bg-elevated transition-colors hover:border-brand-border-strong"
+      style={{ width: "calc((100% - var(--gap) * (var(--cards) - 1)) / var(--cards))" }}
+    >
       <div className="relative aspect-square w-full overflow-hidden bg-brand-bg">
         <img
           src={product.image}
@@ -41,12 +52,12 @@ export function ProductCard({ product }: ProductCardProps) {
       </div>
 
       <div className="flex flex-1 flex-col gap-0.5 p-1.5 sm:p-2">
-        <p className="truncate text-[10px] text-brand-text-muted">{product.brand}</p>
-        <h3 className="line-clamp-2 min-h-[2rem] text-xs font-medium leading-tight text-brand-text">
+        <p className="truncate text-[11px] text-brand-text-muted">{product.brand}</p>
+        <h3 className="line-clamp-2 min-h-[2.25rem] text-[13px] font-medium leading-tight text-brand-text">
           {product.name}
         </h3>
 
-        <div className="mt-0.5 flex flex-col gap-0.5 text-[11px]">
+        <div className="mt-0.5 flex flex-col gap-0.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-brand-text-muted">יחידה</span>
             <span className="font-semibold text-brand-text">₪{product.unitPrice}</span>

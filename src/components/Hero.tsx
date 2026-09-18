@@ -21,7 +21,7 @@
  */
 export function Hero() {
   return (
-    <section className="w-full overflow-hidden border-b border-brand-border bg-brand-bg-secondary">
+    <section className="w-full overflow-hidden border-b border-brand-border bg-black">
       <div className="mx-auto max-w-container">
         <img
           src="/images/new_pic.png"

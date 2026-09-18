@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { categories } from "@/data/categories";
 import { CategoryCard } from "@/components/CategoryCard";
 import { SubcategoryNav } from "@/components/SubcategoryNav";
@@ -23,14 +23,26 @@ import { useScrollDirection } from "@/hooks/useScrollDirection";
  *
  * Selecting a category is what decides which products are shown;
  * subcategories are navigation within that, not a separate filter.
+ *
+ * `sentinelRef` marks where this block naturally sits in the page flow,
+ * before it goes sticky. `useScrollDirection` uses it to hold off the
+ * hide-on-scroll-down/show-on-scroll-up behavior until the page has
+ * actually scrolled that far — otherwise the tabs would start
+ * collapsing from scroll happening in sections above (Hero /
+ * `BusinessInfoBar` / `SecurePaymentBar`), before this row is even the
+ * thing being scrolled past. The `36` offset matches `top-9` below (and
+ * `BusinessInfoBar`'s `h-9`) — the point at which this bar's top edge
+ * actually reaches the sticky `BusinessInfoBar` above it.
  */
 export function CategoryBrowser() {
   const [activeSlug, setActiveSlug] = useState(categories[0]?.slug);
   const activeCategory = categories.find((category) => category.slug === activeSlug);
-  const tabsHidden = useScrollDirection();
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const tabsHidden = useScrollDirection(16, { ref: sentinelRef, offset: 36 });
 
   return (
     <>
+      <div ref={sentinelRef} aria-hidden="true" />
       <div id="categories" className="sticky top-9 z-20 border-b border-brand-border bg-brand-bg-elevated">
         <div className="mx-auto max-w-container px-4 sm:px-6">
           <div

@@ -8,6 +8,22 @@ interface ProductCardProps {
   product: Product;
 }
 
+const GENERIC_PLACEHOLDER = "/images/products/placeholder.svg";
+
+/** Branded, category-level art shown in place of the old generic
+ * placeholder, until a product gets a real photo (see `productImageSrc`
+ * below — any product whose `image` has moved off the shared generic
+ * placeholder path is assumed to have a real photo and is left alone). */
+const CATEGORY_ART: Record<string, string> = {
+  cigarettes: "/images/products/pack-cigarettes.svg",
+  tobacco: "/images/products/pack-tobacco.svg",
+};
+
+function productImageSrc(product: Product): string {
+  if (product.image !== GENERIC_PLACEHOLDER) return product.image;
+  return CATEGORY_ART[product.category] ?? product.image;
+}
+
 /**
  * Reusable product card, sized for use inside `ProductSlider`. All product
  * data comes in via props from `src/data/products.ts` — never hardcode
@@ -39,7 +55,7 @@ export function ProductCard({ product }: ProductCardProps) {
     >
       <div className="relative aspect-square w-full overflow-hidden bg-brand-bg">
         <img
-          src={product.image}
+          src={productImageSrc(product)}
           alt={product.name}
           loading="lazy"
           className="h-full w-full object-cover"
@@ -51,13 +67,13 @@ export function ProductCard({ product }: ProductCardProps) {
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-0.5 p-1.5 sm:p-2">
-        <p className="truncate text-[11px] text-brand-text-muted">{product.brand}</p>
+      <div className="flex flex-1 flex-col gap-0.5 border-t border-brand-border p-1.5 sm:p-2">
+        <p className="truncate text-[11px] font-medium text-brand-gold">{product.brand}</p>
         <h3 className="line-clamp-2 min-h-[2.25rem] text-[13px] font-medium leading-tight text-brand-text">
           {product.name}
         </h3>
 
-        <div className="mt-0.5 flex flex-col gap-0.5 text-xs">
+        <div className="mt-0.5 flex flex-col gap-0.5 text-xs tabular-nums">
           <div className="flex items-center justify-between">
             <span className="text-brand-text-muted">יחידה</span>
             <span className="font-semibold text-brand-text">₪{product.unitPrice}</span>

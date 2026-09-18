@@ -1,4 +1,5 @@
 import { useBusinessStatus } from "@/hooks/useBusinessStatus";
+import { DELIVERY_FEE, MINIMUM_ORDER } from "@/data/deliveryInfo";
 
 /**
  * Thin strip rendered right after `Hero`: live open/closed status + today's
@@ -42,12 +43,12 @@ export function BusinessInfoBar() {
         </span>
 
         <span className="shrink-0 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          <span className="sm:hidden">מינימום ₪50</span>
-          <span className="hidden sm:inline">מינימום הזמנה ₪50</span>
+          <span className="sm:hidden">מינימום ₪{MINIMUM_ORDER}</span>
+          <span className="hidden sm:inline">מינימום הזמנה ₪{MINIMUM_ORDER}</span>
         </span>
 
         <span className="shrink-0 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          משלוח ₪15
+          משלוח ₪{DELIVERY_FEE}
         </span>
       </div>
     </div>

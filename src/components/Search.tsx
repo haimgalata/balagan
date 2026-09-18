@@ -61,7 +61,7 @@ export function Search() {
         type="button"
         onClick={() => setIsOpen(true)}
         aria-label="חיפוש"
-        className="rounded-md p-2 text-brand-text transition-colors hover:text-brand-gold"
+        className="rounded-md p-2.5 text-brand-text outline-none transition-colors hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold sm:p-2"
       >
         <SearchIcon size={22} />
       </button>
@@ -79,13 +79,13 @@ export function Search() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="חיפוש מוצרים... (למשל מרלבורו, דראם)"
-                className="min-w-0 flex-1 bg-transparent text-base text-brand-text placeholder:text-brand-text-muted focus:outline-none"
+                className="min-w-0 flex-1 bg-transparent text-base text-brand-text placeholder:text-brand-text-muted outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
               />
               <button
                 type="button"
                 onClick={handleClose}
                 aria-label="סגור חיפוש"
-                className="shrink-0 rounded-md p-1.5 text-brand-text-muted transition-colors hover:bg-brand-bg-elevated hover:text-brand-gold"
+                className="shrink-0 rounded-md p-1.5 text-brand-text-muted outline-none transition-colors hover:bg-brand-bg-elevated hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
               >
                 <X size={22} />
               </button>

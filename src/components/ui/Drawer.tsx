@@ -8,6 +8,9 @@ interface DrawerProps {
   title: string;
   /** Which screen edge the panel slides in from. */
   side?: "left" | "right";
+  /** Optional id on the panel, so a trigger button elsewhere can point
+   * `aria-controls` at it. */
+  id?: string;
   children: ReactNode;
 }
 
@@ -15,7 +18,7 @@ interface DrawerProps {
  * Shared slide-in panel used by both the mobile navigation and the
  * cart drawer, so overlay/scroll-lock/close behavior lives in one place.
  */
-export function Drawer({ isOpen, onClose, title, side = "left", children }: DrawerProps) {
+export function Drawer({ isOpen, onClose, title, side = "left", id, children }: DrawerProps) {
   useEffect(() => {
     if (!isOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -51,6 +54,7 @@ export function Drawer({ isOpen, onClose, title, side = "left", children }: Draw
 
       {/* Panel */}
       <div
+        id={id}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -64,7 +68,7 @@ export function Drawer({ isOpen, onClose, title, side = "left", children }: Draw
             type="button"
             onClick={onClose}
             aria-label="סגור"
-            className="rounded-md p-1.5 text-brand-text-muted transition-colors hover:bg-brand-bg-elevated hover:text-brand-gold"
+            className="rounded-md p-1.5 text-brand-text-muted outline-none transition-colors hover:bg-brand-bg-elevated hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
           >
             <X size={22} />
           </button>

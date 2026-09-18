@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import type { Category } from "@/types";
+import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
 
 interface SubcategoryNavProps {
   category: Category;
@@ -28,44 +28,7 @@ interface SubcategoryNavProps {
  * the left) — same assumption `ProductSlider` documents.
  */
 export function SubcategoryNav({ category }: SubcategoryNavProps) {
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const [canScrollStart, setCanScrollStart] = useState(false);
-  const [canScrollEnd, setCanScrollEnd] = useState(false);
-
-  const updateScrollState = useCallback(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const maxScroll = el.scrollWidth - el.clientWidth;
-    setCanScrollStart(el.scrollLeft < -1);
-    setCanScrollEnd(el.scrollLeft > -(maxScroll - 1));
-  }, []);
-
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-
-    updateScrollState();
-
-    const handleWheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-      el.scrollLeft += event.deltaY;
-      event.preventDefault();
-    };
-
-    el.addEventListener("scroll", updateScrollState, { passive: true });
-    el.addEventListener("wheel", handleWheel, { passive: false });
-
-    const resizeObserver = new ResizeObserver(updateScrollState);
-    resizeObserver.observe(el);
-
-    return () => {
-      el.removeEventListener("scroll", updateScrollState);
-      el.removeEventListener("wheel", handleWheel);
-      resizeObserver.disconnect();
-    };
-    // Re-attach when the subcategory list itself changes (switching main
-    // category swaps `el`'s content and thus its scrollable width).
-  }, [category.slug, updateScrollState]);
+  const { scrollerRef, canScrollStart, canScrollEnd, scroll } = useHorizontalScroll([category.slug]);
 
   if (category.subcategories.length === 0) return null;
 
@@ -75,13 +38,6 @@ export function SubcategoryNav({ category }: SubcategoryNavProps) {
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const scroll = (direction: "prev" | "next") => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const amount = el.clientWidth * 0.6;
-    el.scrollBy({ left: direction === "next" ? -amount : amount, behavior: "smooth" });
-  };
-
   return (
     <div className="relative">
       {canScrollStart && (
@@ -89,7 +45,7 @@ export function SubcategoryNav({ category }: SubcategoryNavProps) {
           type="button"
           onClick={() => scroll("prev")}
           aria-label="הצג קטגוריות קודמות"
-          className="absolute inset-y-0 start-0 z-10 hidden items-center bg-gradient-to-l from-brand-bg-elevated via-brand-bg-elevated/90 to-transparent py-0.5 pe-6 ps-0.5 lg:flex"
+          className="absolute inset-y-0 start-0 z-10 hidden items-center bg-gradient-to-l from-brand-bg-elevated via-brand-bg-elevated/90 to-transparent py-0.5 pe-6 ps-0.5 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold md:flex"
         >
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border bg-brand-bg-elevated text-brand-text transition-colors hover:border-brand-gold hover:text-brand-gold">
             <ArrowRight size={14} />
@@ -99,14 +55,17 @@ export function SubcategoryNav({ category }: SubcategoryNavProps) {
 
       <div
         ref={scrollerRef}
-        className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth"
+        role="region"
+        aria-label={`תתי-קטגוריות: ${category.name}`}
+        tabIndex={0}
+        className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-gold"
       >
         {category.subcategories.map((sub) => (
           <button
             key={sub.id}
             type="button"
             onClick={() => scrollToSub(sub.slug)}
-            className="shrink-0 snap-start whitespace-nowrap rounded-full border border-brand-border px-3 py-1.5 text-xs text-brand-text-muted transition-colors hover:border-brand-gold hover:text-brand-gold sm:text-sm"
+            className="shrink-0 snap-start whitespace-nowrap rounded-full border border-brand-border px-3.5 py-2.5 text-xs text-brand-text-muted outline-none transition-colors hover:border-brand-gold hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold sm:px-3 sm:py-1.5 sm:text-sm"
           >
             {sub.name}
           </button>
@@ -118,7 +77,7 @@ export function SubcategoryNav({ category }: SubcategoryNavProps) {
           type="button"
           onClick={() => scroll("next")}
           aria-label="הצג קטגוריות נוספות"
-          className="absolute inset-y-0 end-0 z-10 hidden items-center bg-gradient-to-r from-brand-bg-elevated via-brand-bg-elevated/90 to-transparent py-0.5 pe-0.5 ps-6 lg:flex"
+          className="absolute inset-y-0 end-0 z-10 hidden items-center bg-gradient-to-r from-brand-bg-elevated via-brand-bg-elevated/90 to-transparent py-0.5 pe-0.5 ps-6 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold md:flex"
         >
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border bg-brand-bg-elevated text-brand-text transition-colors hover:border-brand-gold hover:text-brand-gold">
             <ArrowLeft size={14} />

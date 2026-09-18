@@ -26,7 +26,7 @@
 
   body {
     @apply bg-brand-bg text-brand-text antialiased;
-    font-family: "Heebo", "Assistant", system-ui, sans-serif;
+    font-family: "Heebo", system-ui, sans-serif;
   }
 
   /* Thin, brand-colored scrollbar (webkit) */

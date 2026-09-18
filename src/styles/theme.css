@@ -32,4 +32,12 @@
   /* Status */
   --color-danger: 220 80 70;
   --color-success: 92 168 110;
+
+  /* Atmosphere — a second, non-accent chromatic tone (aged tobacco-leaf
+     brown) used only for depth: hero overlay gradient, section dividers,
+     and small header accents on side drawers. Never used for CTAs/price —
+     gold stays the only accent color. See the redesign plan's "Visual
+     Direction" section for the reasoning. */
+  --color-tobacco: 61 34 20;
+  --color-tobacco-strong: 92 52 30;
 }

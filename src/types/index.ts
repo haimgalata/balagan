@@ -9,6 +9,13 @@ export interface Product {
   /** Category slug — must match a `slug` in `src/data/categories.ts` */
   category: string;
   brand: string;
+  /**
+   * Explicit subcategory slug (see `src/data/categories.ts`). Prefer this
+   * over relying on `brand`'s derived slug when a brand name doesn't
+   * slugify to the same value as its subcategory (e.g. punctuation,
+   * transliteration differences) — see `CategorySection`.
+   */
+  subcategorySlug?: string;
   /** Price of a single unit. Pack pricing is always derived from this — see `src/lib/pricing.ts`. */
   unitPrice: number;
   image: string;

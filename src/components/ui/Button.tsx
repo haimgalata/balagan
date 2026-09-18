@@ -42,7 +42,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      className={`inline-flex min-w-0 items-center justify-center whitespace-nowrap transition-colors disabled:cursor-not-allowed ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+      className={`inline-flex min-w-0 items-center justify-center whitespace-nowrap outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
       {...rest}
     >
       {children}

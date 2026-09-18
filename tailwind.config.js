@@ -32,10 +32,16 @@ export default {
           "text-muted": "rgb(var(--color-text-muted) / <alpha-value>)",
           danger: "rgb(var(--color-danger) / <alpha-value>)",
           success: "rgb(var(--color-success) / <alpha-value>)",
+          tobacco: "rgb(var(--color-tobacco) / <alpha-value>)",
+          "tobacco-strong": "rgb(var(--color-tobacco-strong) / <alpha-value>)",
         },
       },
       fontFamily: {
-        sans: ["Heebo", "Assistant", "system-ui", "sans-serif"],
+        sans: ["Heebo", "system-ui", "sans-serif"],
+        // Reserved for rare, high-impact brand moments (hero, age gate,
+        // footer store name) — not for body/UI text. See CLAUDE.md/the
+        // redesign plan's "Visual Direction" section.
+        display: ["Suez One", "serif"],
       },
       maxWidth: {
         // Shared site content width (`max-w-container`), used by every

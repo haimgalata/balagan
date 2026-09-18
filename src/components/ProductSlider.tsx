@@ -6,6 +6,8 @@ import { ProductCard } from "@/components/ProductCard";
 interface ProductSliderProps {
   products: Product[];
   emptyMessage?: string;
+  /** Accessible label for the scrollable row, e.g. a brand/category name. */
+  label?: string;
 }
 
 /**
@@ -23,7 +25,7 @@ interface ProductSliderProps {
  * (0 at the start/right edge, growing negative as content scrolls toward
  * the left) that current evergreen browsers implement.
  */
-export function ProductSlider({ products, emptyMessage = "לא נמצאו מוצרים" }: ProductSliderProps) {
+export function ProductSlider({ products, emptyMessage = "לא נמצאו מוצרים", label }: ProductSliderProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   if (products.length === 0) {
@@ -41,7 +43,10 @@ export function ProductSlider({ products, emptyMessage = "לא נמצאו מוצ
     <div className="relative">
       <div
         ref={scrollerRef}
-        className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth pb-1 [--cards:2] [--gap:0.5rem] sm:gap-2.5 sm:[--cards:3] sm:[--gap:0.625rem] md:[--cards:4] lg:[--cards:5] xl:[--cards:6]"
+        role="region"
+        aria-label={label ?? "מוצרים"}
+        tabIndex={0}
+        className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth pb-1 outline-none [--cards:2] [--gap:0.5rem] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-gold sm:gap-2.5 sm:[--cards:3] sm:[--gap:0.625rem] md:[--cards:4] lg:[--cards:5] xl:[--cards:6]"
       >
         {products.map((product) => (
           <ProductCard key={product.id} product={product} />
@@ -53,7 +58,7 @@ export function ProductSlider({ products, emptyMessage = "לא נמצאו מוצ
           type="button"
           onClick={() => scroll("prev")}
           aria-label="הצג מוצרים קודמים"
-          className="rounded-full border border-brand-border p-2 text-brand-text transition-colors hover:border-brand-gold hover:text-brand-gold"
+          className="rounded-full border border-brand-border p-2 text-brand-text outline-none transition-colors hover:border-brand-gold hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
         >
           <ArrowRight size={18} />
         </button>
@@ -61,7 +66,7 @@ export function ProductSlider({ products, emptyMessage = "לא נמצאו מוצ
           type="button"
           onClick={() => scroll("next")}
           aria-label="הצג מוצרים נוספים"
-          className="rounded-full border border-brand-border p-2 text-brand-text transition-colors hover:border-brand-gold hover:text-brand-gold"
+          className="rounded-full border border-brand-border p-2 text-brand-text outline-none transition-colors hover:border-brand-gold hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
         >
           <ArrowLeft size={18} />
         </button>

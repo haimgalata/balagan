@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
-import { Phone, ShoppingCart, User } from "lucide-react";
+import { Phone, ShoppingCart } from "lucide-react";
 import { Search } from "@/components/Search";
+import { AccountDrawer } from "@/components/AccountDrawer";
 import { useCart } from "@/context/CartContext";
 
 /** The store's real phone number (also used in the footer). */
@@ -29,13 +30,13 @@ export function Header() {
   };
 
   return (
-    <header className="border-b border-brand-border bg-brand-bg-secondary">
+    <header className="border-b border-brand-tobacco-strong bg-brand-bg-secondary">
       <div className="relative mx-auto flex h-12 max-w-container items-center justify-between gap-3 px-4 sm:px-6 lg:h-14">
         <div className="flex items-center gap-1 sm:gap-2">
           <a
             href={STORE_PHONE_HREF}
             aria-label={`התקשרו אלינו: ${STORE_PHONE}`}
-            className="flex shrink-0 items-center gap-1.5 rounded-md p-2 text-brand-text transition-colors hover:text-brand-gold"
+            className="flex shrink-0 items-center gap-1.5 rounded-md p-2.5 text-brand-text outline-none transition-colors hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold sm:p-2"
           >
             <Phone size={20} />
           </a>
@@ -50,13 +51,16 @@ export function Header() {
             href="#top"
             onClick={scrollToTop}
             aria-label="בלגן - מרכז הסיגריות והטבק, חזרה לראש הדף"
-            className="pointer-events-auto flex items-center rounded-md p-1"
+            className="pointer-events-auto flex items-center gap-2 rounded-md p-1 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
           >
             <img
               src="/images/logo.jpeg"
               alt="בלגן - מרכז הסיגריות והטבק"
               className="h-8 w-8 rounded-sm object-cover sm:h-9 sm:w-9 lg:h-10 lg:w-10"
             />
+            <span className="hidden font-display text-lg text-brand-gold sm:inline sm:text-xl lg:text-2xl">
+              בלגן
+            </span>
           </a>
         </div>
 
@@ -65,7 +69,7 @@ export function Header() {
             type="button"
             onClick={openCart}
             aria-label="פתיחת סל הקניות"
-            className="relative rounded-md p-2 text-brand-text transition-colors hover:text-brand-gold"
+            className="relative rounded-md p-2.5 text-brand-text outline-none transition-colors hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold sm:p-2"
           >
             <ShoppingCart size={20} />
             {totalCount > 0 && (
@@ -75,16 +79,7 @@ export function Header() {
             )}
           </button>
 
-          {/* Frontend-only placeholder — no real auth exists yet (see CLAUDE.md). */}
-          <button
-            type="button"
-            onClick={() => alert("בקרוב תתאפשר התחברות לאזור האישי.")}
-            aria-label="התחברות / אזור אישי"
-            className="flex items-center gap-1.5 rounded-md p-2 text-brand-text transition-colors hover:text-brand-gold"
-          >
-            <User size={20} />
-            <span className="hidden text-sm font-medium lg:inline">אזור אישי</span>
-          </button>
+          <AccountDrawer />
         </div>
       </div>
     </header>

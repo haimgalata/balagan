@@ -12,6 +12,7 @@ import { CategoryBrowser } from "@/components/CategoryBrowser";
 export function HomePage() {
   return (
     <main id="top">
+      <h1 className="sr-only">בלגן - מרכז הסיגריות והטבק</h1>
       <Hero />
       <BusinessInfoBar />
       <SecurePaymentBar />

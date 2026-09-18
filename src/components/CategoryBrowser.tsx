@@ -1,9 +1,46 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Cigarette, Leaf, Package, type LucideIcon } from "lucide-react";
 import { categories } from "@/data/categories";
+import { getProductsByCategory } from "@/data/products";
 import { CategoryCard } from "@/components/CategoryCard";
+import { CategoryOverflowMenu } from "@/components/CategoryOverflowMenu";
 import { SubcategoryNav } from "@/components/SubcategoryNav";
 import { CategorySection } from "@/components/CategorySection";
 import { useScrollDirection } from "@/hooks/useScrollDirection";
+import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
+
+/** Semantic icon per category slug, where one genuinely fits; categories
+ * without a good match (e.g. a future אביזרים) fall back to a generic
+ * package icon rather than guessing. */
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  cigarettes: Cigarette,
+  tobacco: Leaf,
+};
+
+/** Beyond this many main categories, the rest move into the "עוד
+ * קטגוריות" overflow panel instead of growing the tab row indefinitely —
+ * see `CategoryOverflowMenu`. */
+const OVERFLOW_THRESHOLD = 7;
+
+/** Main category whose slug matches (or prefixes, for a subcategory
+ * anchor like `cigarettes-marlboro`) the given hash, if any. */
+function resolveSlugFromHash(hash: string): string | undefined {
+  if (!hash) return undefined;
+  return categories.find(
+    (category) => category.slug === hash || hash.startsWith(`${category.slug}-`)
+  )?.slug;
+}
+
+/**
+ * Resolves the category to show on first load from `location.hash`, so a
+ * shared/bookmarked link like `#tobacco` or `#cigarettes-marlboro` (a
+ * subcategory anchor) lands on the right category instead of always
+ * defaulting to the first one. No router — just a one-time hash read.
+ */
+function resolveInitialSlug(): string | undefined {
+  const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+  return resolveSlugFromHash(hash) ?? categories[0]?.slug;
+}
 
 /**
  * Owns which main category (סיגריות / טבק) is active, and renders:
@@ -35,10 +72,48 @@ import { useScrollDirection } from "@/hooks/useScrollDirection";
  * actually reaches the sticky `BusinessInfoBar` above it.
  */
 export function CategoryBrowser() {
-  const [activeSlug, setActiveSlug] = useState(categories[0]?.slug);
+  const [activeSlug, setActiveSlug] = useState(resolveInitialSlug);
   const activeCategory = categories.find((category) => category.slug === activeSlug);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const tabsHidden = useScrollDirection(16, { ref: sentinelRef, offset: 36 });
+  const { scrollerRef, canScrollStart, canScrollEnd, scroll } = useHorizontalScroll();
+
+  // Reacts to hash changes after mount too (not just the initial load) —
+  // e.g. clicking a same-page category link in `Footer`, which only
+  // changes `location.hash` and would otherwise be a no-op since this
+  // component doesn't remount. Also lands on a subcategory anchor once
+  // the right category (possibly just switched to) has rendered it.
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      if (!hash) return;
+      const slug = resolveSlugFromHash(hash);
+      if (slug) setActiveSlug(slug);
+      requestAnimationFrame(() => {
+        document.getElementById(hash)?.scrollIntoView({ block: "start" });
+      });
+    };
+
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, []);
+
+  let visibleCategories = categories;
+  let overflowCategories: typeof categories = [];
+  if (categories.length > OVERFLOW_THRESHOLD) {
+    visibleCategories = categories.slice(0, OVERFLOW_THRESHOLD);
+    overflowCategories = categories.slice(OVERFLOW_THRESHOLD);
+    // Keep the active category visible even if it would otherwise have
+    // landed in the overflow panel.
+    if (activeCategory && overflowCategories.some((category) => category.slug === activeSlug)) {
+      const displaced = visibleCategories[visibleCategories.length - 1];
+      visibleCategories = [...visibleCategories.slice(0, -1), activeCategory];
+      overflowCategories = overflowCategories.map((category) =>
+        category.slug === activeSlug ? displaced : category
+      );
+    }
+  }
 
   return (
     <>
@@ -50,15 +125,52 @@ export function CategoryBrowser() {
               tabsHidden ? "max-h-0 opacity-0" : "max-h-20 opacity-100"
             }`}
           >
-            <div className="no-scrollbar flex gap-2 overflow-x-auto py-2 sm:gap-3">
-              {categories.map((category) => (
-                <CategoryCard
-                  key={category.id}
-                  category={category}
-                  active={category.slug === activeSlug}
-                  onSelect={() => setActiveSlug(category.slug)}
-                />
-              ))}
+            <div className="relative">
+              {canScrollStart && (
+                <button
+                  type="button"
+                  onClick={() => scroll("prev")}
+                  aria-label="הצג קטגוריות קודמות"
+                  className="absolute inset-y-0 start-0 z-10 hidden items-center bg-gradient-to-l from-brand-bg-elevated via-brand-bg-elevated/90 to-transparent py-0.5 pe-6 ps-0.5 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold md:flex"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border bg-brand-bg-elevated text-brand-text transition-colors hover:border-brand-gold hover:text-brand-gold">
+                    <ArrowRight size={14} />
+                  </span>
+                </button>
+              )}
+
+              <div
+                ref={scrollerRef}
+                role="region"
+                aria-label="קטגוריות ראשיות"
+                tabIndex={0}
+                className="no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth py-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-gold sm:gap-3"
+              >
+                {visibleCategories.map((category) => (
+                  <CategoryCard
+                    key={category.id}
+                    category={category}
+                    active={category.slug === activeSlug}
+                    count={getProductsByCategory(category.slug).length}
+                    icon={CATEGORY_ICONS[category.slug] ?? Package}
+                    onSelect={() => setActiveSlug(category.slug)}
+                  />
+                ))}
+                <CategoryOverflowMenu categories={overflowCategories} onSelect={setActiveSlug} />
+              </div>
+
+              {canScrollEnd && (
+                <button
+                  type="button"
+                  onClick={() => scroll("next")}
+                  aria-label="הצג קטגוריות נוספות"
+                  className="absolute inset-y-0 end-0 z-10 hidden items-center bg-gradient-to-r from-brand-bg-elevated via-brand-bg-elevated/90 to-transparent py-0.5 pe-0.5 ps-6 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold md:flex"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border bg-brand-bg-elevated text-brand-text transition-colors hover:border-brand-gold hover:text-brand-gold">
+                    <ArrowLeft size={14} />
+                  </span>
+                </button>
+              )}
             </div>
           </div>
 

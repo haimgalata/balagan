@@ -1,0 +1,34 @@
+{
+  "note": "What the OLD app (tag baseline/pre-product-management) actually rendered for each payload in cart-legacy-fixtures.json. Captured with the Playwright browser tool: 1440x900, Date fixed to 2026-09-20T10:00+03:00, age gate pre-verified, fixture written to localStorage['balagan_cart'] then page reloaded and the cart drawer opened. storageAfterLoad = balagan_cart as re-written by the app after loading (old app normalizes the stored cart on load). drawerTotal = the 'סה\"כ לתשלום' amount in the drawer footer (null when the cart is empty).",
+  "results": [
+    { "name": "empty", "storageAfterLoad": "[]", "headerCartButtonText": "", "drawerTotal": null, "drawerLines": [] },
+    { "name": "one-unit", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":1}]", "headerCartButtonText": "1", "drawerTotal": 51,
+      "drawerLines": ["מרלבורו אדום Marlboro · סה\"כ 1 יחידות 1 × יחידה (₪51) ₪51 1 ₪51"] },
+    { "name": "nine-units", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":9}]", "headerCartButtonText": "9", "drawerTotal": 459,
+      "drawerLines": ["מרלבורו אדום Marlboro · סה\"כ 9 יחידות 9 × יחידה (₪51) ₪459 9 ₪459"] },
+    { "name": "ten-units", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":10}]", "headerCartButtonText": "10", "drawerTotal": 500,
+      "drawerLines": ["מרלבורו אדום Marlboro · סה\"כ 10 יחידות 1 × פקט (₪500) ₪500 הנחת פקט -₪10 10 ₪500"] },
+    { "name": "twenty-three-units", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":23}]", "headerCartButtonText": "23", "drawerTotal": 1153,
+      "drawerLines": ["מרלבורו אדום Marlboro · סה\"כ 23 יחידות 2 × פקט (₪500) ₪1000 3 × יחידה (₪51) ₪153 הנחת פקט -₪20 23 ₪1153"] },
+    { "name": "multi-product", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":12},{\"productId\":\"2\",\"quantity\":3},{\"productId\":\"3\",\"quantity\":1},{\"productId\":\"58\",\"quantity\":10}]", "headerCartButtonText": "26", "drawerTotal": 2001,
+      "drawerLines": [
+        "מרלבורו אדום Marlboro · סה\"כ 12 יחידות 1 × פקט (₪500) ₪500 2 × יחידה (₪51) ₪102 הנחת פקט -₪10 12 ₪602",
+        "מרלבורו גולד Marlboro · סה\"כ 3 יחידות 3 × יחידה (₪51) ₪153 3 ₪153",
+        "מרלבורו טאץ׳ Marlboro · סה\"כ 1 יחידות 1 × יחידה (₪46) ₪46 1 ₪46",
+        "טבק מרלבורו גולד 30 גרם Marlboro · סה\"כ 10 יחידות 1 × פקט (₪1200) ₪1200 הנחת פקט -₪10 10 ₪1200"
+      ] },
+    { "name": "legacy-pack-shape", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":20},{\"productId\":\"2\",\"quantity\":3}]", "headerCartButtonText": "23", "drawerTotal": 1153,
+      "drawerLines": [
+        "מרלבורו אדום Marlboro · סה\"כ 20 יחידות 2 × פקט (₪500) ₪1000 הנחת פקט -₪20 20 ₪1000",
+        "מרלבורו גולד Marlboro · סה\"כ 3 יחידות 3 × יחידה (₪51) ₪153 3 ₪153"
+      ] },
+    { "name": "unknown-product-id", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":1}]", "headerCartButtonText": "1", "drawerTotal": 51,
+      "drawerLines": ["מרלבורו אדום Marlboro · סה\"כ 1 יחידות 1 × יחידה (₪51) ₪51 1 ₪51"] },
+    { "name": "bad-quantities", "storageAfterLoad": "[{\"productId\":\"5\",\"quantity\":2}]", "headerCartButtonText": "2", "drawerTotal": 98,
+      "drawerLines": ["ווינסטון אדום Winston · סה\"כ 2 יחידות 2 × יחידה (₪49) ₪98 2 ₪98"] },
+    { "name": "duplicate-lines", "storageAfterLoad": "[{\"productId\":\"1\",\"quantity\":12}]", "headerCartButtonText": "12", "drawerTotal": 602,
+      "drawerLines": ["מרלבורו אדום Marlboro · סה\"כ 12 יחידות 1 × פקט (₪500) ₪500 2 × יחידה (₪51) ₪102 הנחת פקט -₪10 12 ₪602"] },
+    { "name": "not-an-array", "storageAfterLoad": "[]", "headerCartButtonText": "", "drawerTotal": null, "drawerLines": [] },
+    { "name": "corrupt-json", "storageAfterLoad": "[]", "headerCartButtonText": "", "drawerTotal": null, "drawerLines": [] }
+  ]
+}

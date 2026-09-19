@@ -1,0 +1,302 @@
+{
+  "note": "Old-model expectations computed from src/lib/pricing.ts + a verbatim port of sanitizeCartItems at tag baseline/pre-product-management. Observed app behavior is in cart-legacy-observed.json.",
+  "fixtures": [
+    {
+      "name": "empty",
+      "description": "Empty cart array",
+      "storageKey": "balagan_cart",
+      "storageValue": "[]",
+      "expectedOld": {
+        "lines": [],
+        "totalCount": 0,
+        "totalPrice": 0
+      }
+    },
+    {
+      "name": "one-unit",
+      "description": "1 unit of id 1 — no pack involved, total must not change",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":1}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 1,
+            "packs": 0,
+            "remainingUnits": 1,
+            "packPrice": 500,
+            "discount": 0,
+            "lineTotal": 51
+          }
+        ],
+        "totalCount": 1,
+        "totalPrice": 51
+      }
+    },
+    {
+      "name": "nine-units",
+      "description": "9 units — one short of a pack",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":9}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 9,
+            "packs": 0,
+            "remainingUnits": 9,
+            "packPrice": 500,
+            "discount": 0,
+            "lineTotal": 459
+          }
+        ],
+        "totalCount": 9,
+        "totalPrice": 459
+      }
+    },
+    {
+      "name": "ten-units",
+      "description": "10 units — old model auto-applied the pack (₪500); new model prices as 10 units (₪510)",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":10}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 10,
+            "packs": 1,
+            "remainingUnits": 0,
+            "packPrice": 500,
+            "discount": 10,
+            "lineTotal": 500
+          }
+        ],
+        "totalCount": 10,
+        "totalPrice": 500
+      }
+    },
+    {
+      "name": "twenty-three-units",
+      "description": "23 units — 2 auto packs + 3 units in the old model",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":23}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 23,
+            "packs": 2,
+            "remainingUnits": 3,
+            "packPrice": 500,
+            "discount": 20,
+            "lineTotal": 1153
+          }
+        ],
+        "totalCount": 23,
+        "totalPrice": 1153
+      }
+    },
+    {
+      "name": "multi-product",
+      "description": "Several products incl. an out-of-stock one and a tobacco product",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":12},{\"productId\":\"2\",\"quantity\":3},{\"productId\":\"3\",\"quantity\":1},{\"productId\":\"58\",\"quantity\":10}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 12,
+            "packs": 1,
+            "remainingUnits": 2,
+            "packPrice": 500,
+            "discount": 10,
+            "lineTotal": 602
+          },
+          {
+            "productId": "2",
+            "name": "מרלבורו גולד",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 3,
+            "packs": 0,
+            "remainingUnits": 3,
+            "packPrice": 500,
+            "discount": 0,
+            "lineTotal": 153
+          },
+          {
+            "productId": "3",
+            "name": "מרלבורו טאץ׳",
+            "unitPrice": 46,
+            "inStock": false,
+            "totalUnits": 1,
+            "packs": 0,
+            "remainingUnits": 1,
+            "packPrice": 450,
+            "discount": 0,
+            "lineTotal": 46
+          },
+          {
+            "productId": "58",
+            "name": "טבק מרלבורו גולד 30 גרם",
+            "unitPrice": 121,
+            "inStock": true,
+            "totalUnits": 10,
+            "packs": 1,
+            "remainingUnits": 0,
+            "packPrice": 1200,
+            "discount": 10,
+            "lineTotal": 1200
+          }
+        ],
+        "totalCount": 26,
+        "totalPrice": 2001
+      }
+    },
+    {
+      "name": "legacy-pack-shape",
+      "description": "Ancient per-line-type shape: a `pack` line counted PACKS (×10 units), old sanitizer expands it",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"type\":\"pack\",\"quantity\":2},{\"productId\":\"2\",\"type\":\"unit\",\"quantity\":3}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 20,
+            "packs": 2,
+            "remainingUnits": 0,
+            "packPrice": 500,
+            "discount": 20,
+            "lineTotal": 1000
+          },
+          {
+            "productId": "2",
+            "name": "מרלבורו גולד",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 3,
+            "packs": 0,
+            "remainingUnits": 3,
+            "packPrice": 500,
+            "discount": 0,
+            "lineTotal": 153
+          }
+        ],
+        "totalCount": 23,
+        "totalPrice": 1153
+      }
+    },
+    {
+      "name": "unknown-product-id",
+      "description": "Contains an id that is not in the catalog (old app drops it)",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"9999\",\"quantity\":2},{\"productId\":\"1\",\"quantity\":1}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 1,
+            "packs": 0,
+            "remainingUnits": 1,
+            "packPrice": 500,
+            "discount": 0,
+            "lineTotal": 51
+          }
+        ],
+        "totalCount": 1,
+        "totalPrice": 51
+      }
+    },
+    {
+      "name": "bad-quantities",
+      "description": "Zero, negative, string and fractional quantities",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":0},{\"productId\":\"2\",\"quantity\":-3},{\"productId\":\"4\",\"quantity\":\"5\"},{\"productId\":\"5\",\"quantity\":2.7}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "5",
+            "name": "ווינסטון אדום",
+            "unitPrice": 49,
+            "inStock": true,
+            "totalUnits": 2,
+            "packs": 0,
+            "remainingUnits": 2,
+            "packPrice": 480,
+            "discount": 0,
+            "lineTotal": 98
+          }
+        ],
+        "totalCount": 2,
+        "totalPrice": 98
+      }
+    },
+    {
+      "name": "duplicate-lines",
+      "description": "Same product twice — old sanitizer merges into 12 units",
+      "storageKey": "balagan_cart",
+      "storageValue": "[{\"productId\":\"1\",\"quantity\":4},{\"productId\":\"1\",\"quantity\":8}]",
+      "expectedOld": {
+        "lines": [
+          {
+            "productId": "1",
+            "name": "מרלבורו אדום",
+            "unitPrice": 51,
+            "inStock": true,
+            "totalUnits": 12,
+            "packs": 1,
+            "remainingUnits": 2,
+            "packPrice": 500,
+            "discount": 10,
+            "lineTotal": 602
+          }
+        ],
+        "totalCount": 12,
+        "totalPrice": 602
+      }
+    },
+    {
+      "name": "not-an-array",
+      "description": "Valid JSON but not an array",
+      "storageKey": "balagan_cart",
+      "storageValue": "{\"productId\":\"1\",\"quantity\":3}",
+      "expectedOld": {
+        "lines": [],
+        "totalCount": 0,
+        "totalPrice": 0
+      }
+    },
+    {
+      "name": "corrupt-json",
+      "description": "Unparseable string in storage",
+      "storageKey": "balagan_cart",
+      "storageValue": "{not json",
+      "expectedOld": {
+        "lines": [],
+        "totalCount": 0,
+        "totalPrice": 0
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { products } from "@/data/products";
+import { useCatalog } from "@/context/CatalogContext";
 import { UNITS_PER_PACK, getPriceBreakdown, type PriceBreakdown } from "@/lib/pricing";
 import type { CartItem, Product } from "@/types";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
@@ -48,9 +48,14 @@ const CartContext = createContext<CartContextValue | undefined>(undefined);
  * The cart model is "quantity = total units for a product". This also
  * migrates the older per-line-type (separate unit/pack lines) cart shape
  * into that model — a stored "pack" line's quantity counted packs, not
- * units, so it's expanded ×`UNITS_PER_PACK` here — and drops anything
- * referencing an unknown product or a bad quantity, so an outdated or
- * corrupted cart never crashes the app.
+ * units, so it's expanded ×`UNITS_PER_PACK` here — and drops anything with a
+ * malformed id or a bad quantity, so a corrupted cart never crashes the app.
+ *
+ * Deliberately does NOT check ids against the catalog: the catalog is loaded
+ * asynchronously (and products can be hidden/removed in the admin), so an id
+ * that can't be resolved right now must not be erased from storage. Such lines
+ * are simply not rendered or priced — see `lines` below — and reappear if the
+ * product does.
  */
 function sanitizeCartItems(raw: CartItem[]): CartItem[] {
   if (!Array.isArray(raw)) return [];
@@ -58,7 +63,6 @@ function sanitizeCartItems(raw: CartItem[]): CartItem[] {
   const totals = new Map<string, number>();
   for (const entry of raw as unknown as Array<Record<string, unknown>>) {
     if (!entry || typeof entry.productId !== "string") continue;
-    if (!products.some((product) => product.id === entry.productId)) continue;
 
     const rawQuantity = typeof entry.quantity === "number" ? Math.floor(entry.quantity) : 0;
     if (rawQuantity <= 0) continue;
@@ -71,6 +75,7 @@ function sanitizeCartItems(raw: CartItem[]): CartItem[] {
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
+  const { products } = useCatalog();
   const [items, setItems] = useLocalStorage<CartItem[]>(CART_STORAGE_KEY, [], sanitizeCartItems);
   const [isOpen, setIsOpen] = useState(false);
   const [toast, setToast] = useState<CartToast | null>(null);
@@ -120,7 +125,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           };
         })
         .filter((line): line is CartLine => line !== null),
-    [items]
+    [items, products]
   );
 
   const totalCount = useMemo(() => lines.reduce((sum, l) => sum + l.quantity, 0), [lines]);

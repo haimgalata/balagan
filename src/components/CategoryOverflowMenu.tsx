@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
 import type { Category } from "@/types";
-import { getProductsByCategory } from "@/data/products";
+import { useCatalog } from "@/context/CatalogContext";
 
 interface CategoryOverflowMenuProps {
   categories: Category[];
@@ -25,6 +25,7 @@ interface CategoryOverflowMenuProps {
  * scroll/resize rather than tracking continuously.
  */
 export function CategoryOverflowMenu({ categories, onSelect }: CategoryOverflowMenuProps) {
+  const { getProductsByCategory } = useCatalog();
   const [isOpen, setIsOpen] = useState(false);
   const [panelPosition, setPanelPosition] = useState<{ top: number; right: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);

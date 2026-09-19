@@ -1,6 +1,6 @@
 import { PackageSearch } from "lucide-react";
 import type { Category, Product } from "@/types";
-import { getProductsByCategory } from "@/data/products";
+import { useCatalog } from "@/context/CatalogContext";
 import { ProductSlider } from "@/components/ProductSlider";
 
 interface CategorySectionProps {
@@ -24,6 +24,7 @@ function subcategorySlugOf(product: Product): string {
  * of extra breathing room above the target rather than a flush fit.
  */
 export function CategorySection({ category }: CategorySectionProps) {
+  const { getProductsByCategory } = useCatalog();
   const allProducts = getProductsByCategory(category.slug);
 
   if (import.meta.env.DEV && category.subcategories.length > 0) {

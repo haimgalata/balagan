@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { SearchIcon, X, PackageX } from "lucide-react";
-import { products } from "@/data/products";
+import { useCatalog } from "@/context/CatalogContext";
 import { useCart } from "@/context/CartContext";
 import { Button } from "@/components/ui/Button";
 
@@ -23,6 +23,7 @@ export function Search() {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const { addUnits } = useCart();
+  const { products } = useCatalog();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -48,7 +49,7 @@ export function Search() {
         product.name.toLowerCase().includes(trimmed) ||
         product.brand.toLowerCase().includes(trimmed)
     );
-  }, [query]);
+  }, [query, products]);
 
   const handleClose = () => {
     setIsOpen(false);

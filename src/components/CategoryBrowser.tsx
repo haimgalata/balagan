@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Cigarette, Leaf, Package, type LucideIcon } from "lucide-react";
-import { categories } from "@/data/categories";
-import { getProductsByCategory } from "@/data/products";
+import { ArrowLeft, ArrowRight, Cigarette, Leaf, Loader2, Package, type LucideIcon } from "lucide-react";
+import type { Category } from "@/types";
+import { useCatalog } from "@/context/CatalogContext";
 import { CategoryCard } from "@/components/CategoryCard";
 import { CategoryOverflowMenu } from "@/components/CategoryOverflowMenu";
 import { SubcategoryNav } from "@/components/SubcategoryNav";
@@ -24,7 +24,7 @@ const OVERFLOW_THRESHOLD = 7;
 
 /** Main category whose slug matches (or prefixes, for a subcategory
  * anchor like `cigarettes-marlboro`) the given hash, if any. */
-function resolveSlugFromHash(hash: string): string | undefined {
+function resolveSlugFromHash(categories: Category[], hash: string): string | undefined {
   if (!hash) return undefined;
   return categories.find(
     (category) => category.slug === hash || hash.startsWith(`${category.slug}-`)
@@ -37,9 +37,35 @@ function resolveSlugFromHash(hash: string): string | undefined {
  * subcategory anchor) lands on the right category instead of always
  * defaulting to the first one. No router — just a one-time hash read.
  */
-function resolveInitialSlug(): string | undefined {
+function resolveInitialSlug(categories: Category[]): string | undefined {
   const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
-  return resolveSlugFromHash(hash) ?? categories[0]?.slug;
+  return resolveSlugFromHash(categories, hash) ?? categories[0]?.slug;
+}
+
+/**
+ * The catalog is loaded from the database (see `CatalogContext`). On a
+ * returning visit it is available instantly from the local cache; only a
+ * first-ever visit briefly waits here. The real browser below mounts once data
+ * exists, so its initial-category / deep-link logic always runs against real
+ * categories (a `#cigarettes-marlboro` link still lands correctly).
+ */
+export function CategoryBrowser() {
+  const { status } = useCatalog();
+
+  if (status === "loading") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="mx-auto flex min-h-[60vh] max-w-container flex-col items-center justify-center gap-3 px-4 text-brand-text-muted sm:px-6"
+      >
+        <Loader2 size={28} className="animate-spin text-brand-gold" aria-hidden="true" />
+        <span className="text-sm">טוען מוצרים…</span>
+      </div>
+    );
+  }
+
+  return <CategoryBrowserContent />;
 }
 
 /**
@@ -71,9 +97,21 @@ function resolveInitialSlug(): string | undefined {
  * `BusinessInfoBar`'s `h-9`) — the point at which this bar's top edge
  * actually reaches the sticky `BusinessInfoBar` above it.
  */
-export function CategoryBrowser() {
-  const [activeSlug, setActiveSlug] = useState(resolveInitialSlug);
+function CategoryBrowserContent() {
+  const { categories, getProductsByCategory } = useCatalog();
+  const [activeSlug, setActiveSlug] = useState(() => resolveInitialSlug(categories));
   const activeCategory = categories.find((category) => category.slug === activeSlug);
+  // Latest categories for the hashchange listener below, without re-subscribing (and
+  // re-scrolling) every time a background refresh swaps in a new catalog object.
+  const categoriesRef = useRef(categories);
+  categoriesRef.current = categories;
+
+  // If a background refresh removed the category being viewed, fall back to the first one.
+  useEffect(() => {
+    if (categories.length > 0 && !categories.some((category) => category.slug === activeSlug)) {
+      setActiveSlug(categories[0].slug);
+    }
+  }, [categories, activeSlug]);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const tabsHidden = useScrollDirection(16, { ref: sentinelRef, offset: 36 });
   const { scrollerRef, canScrollStart, canScrollEnd, scroll } = useHorizontalScroll();
@@ -87,7 +125,7 @@ export function CategoryBrowser() {
     const applyHash = () => {
       const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
       if (!hash) return;
-      const slug = resolveSlugFromHash(hash);
+      const slug = resolveSlugFromHash(categoriesRef.current, hash);
       if (slug) setActiveSlug(slug);
       requestAnimationFrame(() => {
         document.getElementById(hash)?.scrollIntoView({ block: "start" });

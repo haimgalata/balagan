@@ -1,13 +1,15 @@
 import { Phone } from "lucide-react";
-import { categories } from "@/data/categories";
+import { useCatalog } from "@/context/CatalogContext";
 
 /**
  * Site footer — business blurb, contact, a category sitemap generated
- * from `categories.ts` (grows automatically as categories are added, no
+ * from the catalog (grows automatically as categories are added, no
  * changes needed here), and the legal line. Category links activate the
  * right section on load via `CategoryBrowser`'s hash-read.
  */
 export function Footer() {
+  const { categories } = useCatalog();
+
   return (
     <footer className="border-t border-brand-tobacco-strong bg-brand-bg-secondary">
       <div className="mx-auto flex max-w-container flex-col items-center gap-5 px-4 py-8 text-center sm:px-6 sm:py-10">

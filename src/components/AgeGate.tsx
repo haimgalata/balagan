@@ -49,7 +49,7 @@ export function AgeGate() {
     >
       <div className="w-full max-w-sm rounded-2xl border border-brand-border bg-brand-bg-elevated p-6 text-center shadow-2xl sm:max-w-md sm:p-8">
         <img
-          src="/images/new_pic.png"
+          src="/images/logo.png"
           alt="בלגן - מרכז הסיגריות והטבק"
           className="mx-auto mb-6 h-20 w-auto rounded-lg sm:h-24"
         />

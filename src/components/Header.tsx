@@ -54,13 +54,9 @@ export function Header() {
             className="pointer-events-auto flex items-center gap-2 rounded-md p-1 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
           >
             <img
-              src="/images/logo.jpeg"
+              src="/images/header-logo.png"
               alt="בלגן - מרכז הסיגריות והטבק"
-              className="h-8 w-8 rounded-sm object-cover sm:h-9 sm:w-9 lg:h-10 lg:w-10"
-            />
-            <span className="hidden font-display text-lg text-brand-gold sm:inline sm:text-xl lg:text-2xl">
-              בלגן
-            </span>
+              className="h-10 w-auto max-w-[130px] object-contain sm:h-11 sm:max-w-[150px] lg:h-12 lg:max-w-[170px]"              />
           </a>
         </div>
 

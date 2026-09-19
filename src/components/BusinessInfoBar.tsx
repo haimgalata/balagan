@@ -36,19 +36,36 @@ export function BusinessInfoBar() {
           </span>
         </span>
 
-        <span className="shrink-0 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          {/* Full "שעות <יום>: ..." label from `sm` up; just the hours on mobile to keep the row compact. */}
-          <span className="hidden sm:inline">שעות {todayLabel}: </span>
-          {hoursLabel}
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
+            aria-hidden="true"
+          />
+
+          <span>
+            {hoursLabel}
+          </span>
         </span>
 
-        <span className="shrink-0 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          <span className="sm:hidden">מינימום ₪{MINIMUM_ORDER}</span>
-          <span className="hidden sm:inline">מינימום הזמנה ₪{MINIMUM_ORDER}</span>
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
+            aria-hidden="true"
+          />
+
+          <span>
+            <span className="sm:hidden">מינימום ₪{MINIMUM_ORDER}</span>
+            <span className="hidden sm:inline">מינימום הזמנה ₪{MINIMUM_ORDER}</span>
+          </span>
         </span>
 
-        <span className="shrink-0 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          משלוח ₪{DELIVERY_FEE}
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
+            aria-hidden="true"
+          />
+
+          <span>משלוח ₪{DELIVERY_FEE}</span>
         </span>
       </div>
     </div>

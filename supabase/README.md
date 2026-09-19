@@ -13,7 +13,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0004_rpc.sql` | `get_storefront_catalog()` — the only thing anonymous visitors can call | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project | — |
 
-No seed data yet — Step 2 inserts the 141 products with their original ids (`1`…`148`).
+`seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
 
 ## Apply
 
@@ -48,6 +48,36 @@ ids (`900000001…`) and removes them again; it never touches the id sequence. P
 
 Paste me the output (there are no secrets in it) and Step 1 is closed.
 
+## Step 2 — load the catalog and prove it matches
+
+`seed.sql` is generated from the static catalog by `scripts/generate-seed.mjs` (one-off; the old pack formula is used
+only there, once, to write literal numbers). It loads **2 categories, 32 subcategories, 141 products** with their
+original ids (`"1"`…`"148"`, gaps kept) and original display order. Every product gets today's package exactly
+(decision D2): label `פקט`, 10 units, regular price = unit × 10 (red strikethrough on the site) with an **active package
+sale** at unit × 10 − 10. Availability copies today's stock flag (ids 3 and 9 are unavailable). From then on each price
+and sale is plain data, editable independently in the admin.
+
+1. **SQL Editor → New query**, paste the whole of `supabase/seed.sql`, Run. It is one transaction: it refuses to run if
+   any category/subcategory/product already exists, and it verifies its own result (counts, placement, prices,
+   availability, id sequence untouched) before committing — any failure rolls everything back and inserts nothing.
+   Expected: "Success. No rows returned".
+2. **Prove parity** with the frozen baseline (anon key only, changes nothing):
+   ```powershell
+   $env:SUPABASE_URL="https://YOUR-PROJECT.supabase.co"; $env:SUPABASE_ANON_KEY="<anon or publishable key>"
+   node scripts/verify-seed.mjs
+   ```
+   Expected last line: `2047 comparisons, 0 differences — live database == pre-migration baseline.`
+3. **Next-id check** (SQL Editor): `select last_value, is_called from public.product_id_seq;` → `149 | false`
+   (the first product created in the admin will get id 149).
+4. Optional but worthwhile now that the tables hold real rows: re-run `node scripts/security-test.mjs --check-signup`.
+
+Starting over (only while nobody has made real edits) — SQL Editor:
+```sql
+delete from public.products; delete from public.subcategories; delete from public.categories;
+alter sequence public.product_id_seq restart with 149;   -- only needed if it was ever consumed
+```
+then run `seed.sql` again.
+
 ## Design notes worth knowing
 
 - **Why anon can't just read `products`:** rows include barcode and stock counters, and hidden items. Anonymous visitors have *no* table access; `get_storefront_catalog()` returns an explicit whitelist (no barcode, no stock counts, no hidden rows).
@@ -65,3 +95,9 @@ everywhere but the catalog function, a non-admin sees/changes nothing and cannot
 re-runnability, and the MFA switch. `scripts/security-test.mjs` was dry-run against a mock of the Supabase HTTP API
 (71 checks). Neither replaces running the script against your real project, which is the authoritative test of the
 dashboard settings (sign-ups, storage limits) and of PostgREST/Storage behaviour.
+
+`seed.sql` was likewise loaded into a fresh migrated Postgres (33 checks: exact ids/order/prices vs the baseline, the
+apostrophe and geresh names, decimal prices such as 40.9 → 409/399, refusal to run twice or on partial data, full
+rollback when a self-check fails, sequence untouched), and `scripts/verify-seed.mjs` was tested to report 0
+differences on the correct seed and to catch a changed price, a reordered/hidden product, a removed sale, a wrong
+stock flag, a renamed product and a hidden subcategory.

@@ -19,7 +19,7 @@ import { DELIVERY_FEE, MINIMUM_ORDER } from "@/data/deliveryInfo";
  * changes.
  */
 export function BusinessInfoBar() {
-  const { isOpen, todayLabel, hoursLabel } = useBusinessStatus();
+  const { isOpen, hoursLabel } = useBusinessStatus();
 
   return (
     <div className="sticky top-0 z-30 border-b border-brand-border bg-brand-bg-elevated">

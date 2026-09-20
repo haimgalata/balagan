@@ -5,10 +5,10 @@ import { useCart } from "@/context/CartContext";
 const AUTO_DISMISS_MS = 3000;
 
 /**
- * Non-blocking confirmation toast shown after `addUnits` runs (see
+ * Non-blocking confirmation toast shown after `addItem` runs (see
  * `CartContext`). Reuses the cart's toast state instead of a separate
  * notification system — every "add to cart" entry point (ProductCard,
- * Search, the cart drawer's `+`) already goes through `addUnits`, so they
+ * Search, the cart drawer's `+`) already goes through `addItem`, so they
  * all get this for free. Centered fixed positioning (both axes) keeps it
  * from ever affecting page layout/scroll while staying clearly visible
  * above the rest of the content, including open drawers/search.

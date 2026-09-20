@@ -1,11 +1,12 @@
 import { ShoppingCart } from "lucide-react";
 import { useCart } from "@/context/CartContext";
 import { Button } from "@/components/ui/Button";
+import { formatPrice } from "@/lib/pricing";
 
 /**
  * Compact persistent cart summary, fixed to the bottom of the viewport.
  * Reads straight from `useCart()` — no separate cart state — so it updates
- * the instant `addUnits`/`increment`/`decrement`/`removeItem` change the
+ * the instant `addItem`/`increment`/`decrement`/`removeLine` change the
  * cart anywhere in the app (a product card, search results, the drawer
  * itself). "לצפייה בסל" just calls the same `openCart()` the header's cart
  * icon uses — the existing drawer/checkout flow, nothing new.
@@ -17,7 +18,7 @@ import { Button } from "@/components/ui/Button";
  * content — importantly the footer — never ends up hidden underneath it.
  */
 export function CartSummaryBar() {
-  const { totalCount, totalPrice, isOpen, openCart } = useCart();
+  const { totalCount, totalPriceCents, isOpen, openCart } = useCart();
 
   if (totalCount === 0 || isOpen) return null;
 
@@ -40,7 +41,7 @@ export function CartSummaryBar() {
             </span>
             <span className="flex min-w-0 flex-col leading-tight">
               <span className="truncate text-xs text-brand-text-muted">{totalCount} פריטים בסל</span>
-              <span className="truncate text-base font-bold text-brand-gold">₪{totalPrice}</span>
+              <span className="truncate text-base font-bold text-brand-gold">₪{formatPrice(totalPriceCents)}</span>
             </span>
           </button>
 

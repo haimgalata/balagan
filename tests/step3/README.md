@@ -1,11 +1,11 @@
-# Step 3 regression suite
+# Storefront regression suites (tests/step3 + tests/step4)
 
 Proves the storefront reads its catalog from the database and still looks and behaves **exactly** like the
 pre-migration app (tag `baseline/pre-product-management`), for both catalog sources:
 
 | Variant (Playwright project) | Catalog source | Backend |
 |---|---|---|
-| `static-desktop` / `static-mobile` | bundled `src/data` files (`VITE_CATALOG_SOURCE=static`) | none |
+| `static-desktop` / `static-mobile` | bundled fallback catalog `src/data/fallbackCatalog.ts` (`VITE_CATALOG_SOURCE=static`) | none |
 | `supabase-desktop` / `supabase-mobile` | live-catalog code path | the RPC is answered **inside the browser** with the seeded catalog (built from `tests/baseline/catalog.json`), so failures/slowness can be simulated |
 | `live-desktop` / `live-mobile` *(optional)* | your real Supabase project | real network, anon key only |
 
@@ -13,19 +13,24 @@ Uses your installed Chrome (`channel: "chrome"`), fixed clock, blocked web fonts
 images to decode, so runs are deterministic.
 
 ```
-npm run test:e2e                              # everything except the pixel comparison's baseline generation
-npx playwright test parity cart catalog navigation --project=supabase-desktop     # one variant
+npm run test:unit    # pure functions (pricing, cart storage/migration, fallback catalog) — no browser, ~1 s
+npm run test:e2e     # browser suites on static + stubbed-database variants, desktop + mobile
+npx playwright test parity navigation catalog --project=supabase-desktop     # one variant
 ```
 
 ## Specs
 - `parity.spec.ts` — rendered text (tabs, sub-nav, one line per product card) equals `tests/baseline/dom-text/*.txt`.
 - `visual.spec.ts` — 11 screenshots x 2 viewports must have **0 differing pixels** vs. baseline images rendered from the tag.
-- `cart.spec.ts` — the 12 saved-cart payloads render exactly as the old app rendered them (one documented difference:
-  unresolvable ids are kept in storage instead of erased).
 - `catalog.spec.ts` — loading state, cache (stale-while-revalidate), HTTP 500 / malformed / non-JSON / never-answering
   responses, corrupted cache, product removed from the DB while in a saved cart, static mode makes no DB request.
+- `tests/step4/cart-migration.spec.ts` — the 12 captured dev carts migrate to the explicit-option cart (`balagan_cart_v2`):
+  units stay units, the old `balagan_cart` key is untouched, nothing is deleted, out-of-stock lines are excluded.
+- `tests/step4/cart-options.spec.ts` — the customer chooses unit or package explicitly (10 units = ₪510, 1 package = ₪500),
+  the badge counts purchase items (2 units + 1 package = 3), independent lines/steppers, float-free totals, per-option
+  sales/labels/availability, a product without a package.
+- `tests/step4/*.unit.spec.ts` — pure unit tests (`playwright.unit.config.ts`).
 - `navigation.spec.ts` — deep links (incl. `#cigarettes-l&m`), footer links, tab counts, every subcategory lists its
-  products in baseline order, search, add unit/pack with the old pack pricing.
+  products in baseline order, search, adding a unit and a package as two separate lines.
 
 ## Screenshots are not in git (about 15 MB) — regenerate them from the tag
 ```powershell
@@ -42,6 +47,13 @@ npx playwright test visual                                               # compa
 ## Run against your real Supabase project (anon key only)
 ```powershell
 $env:LIVE_SUPABASE_URL="https://YOUR-PROJECT.supabase.co"; $env:LIVE_SUPABASE_ANON_KEY="<anon or publishable key>"
-npx playwright test parity navigation cart visual --project=live-desktop --project=live-mobile
+npx playwright test parity navigation cart-migration cart-options --project=live-desktop --project=live-mobile
 ```
 This exercises real CORS/headers/network with the real seeded data (what `scripts/verify-seed.mjs` proved equals the baseline).
+
+## Snapshot approval note (Step 4)
+The only intended pixel changes vs the pre-migration baseline are the **cart summary bar and cart drawer** screenshots
+(`*-10-cart-summary-bar.png`, `*-11-cart-drawer.png`): the cart now shows one row per chosen option, the badge counts
+purchase items and out-of-stock lines are excluded. Every other screenshot must stay at 0 differing pixels. After reviewing
+the new cart images, accept them with:
+`npx playwright test visual -g "10/11" --update-snapshots` (static projects; the database variants must then pass unchanged).

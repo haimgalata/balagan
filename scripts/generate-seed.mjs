@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { products } = await import(new URL("../src/data/products.ts", import.meta.url));
 const { categories } = await import(new URL("../src/data/categories.ts", import.meta.url));
-const pricing = await import(new URL("../src/lib/pricing.ts", import.meta.url));
+const pricing = await import(new URL("./legacy/old-pricing.mjs", import.meta.url));
 
 // ---- the one-off migration rule (decision D2), in exact integer cents -----------
 const UNITS_PER_PACKAGE = 10;

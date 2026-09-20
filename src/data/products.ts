@@ -1,22 +1,25 @@
 import type { Product } from "@/types";
 
 /**
- * Mock product catalog.
+ * ORIGINAL static product list — now only the SOURCE for one-off scripts
+ * (`scripts/generate-seed.mjs`, `scripts/generate-fallback-catalog.mjs`,
+ * `scripts/baseline/*`). The storefront no longer imports this file: it reads the
+ * catalog from the database, with `src/data/fallbackCatalog.ts` (generated from
+ * this list) as the offline fallback. Editing a product here changes nothing on the
+ * site — manage products in the admin instead.
  *
- * This is the ONLY place product data lives. `ProductCard`,
- * `ProductSlider` and the homepage all read from this array —
- * add, edit or remove a product by editing this file only.
- *
- * `category` must match a category `slug` in `src/data/categories.ts`.
- * `image` paths point into `/public/images/products/` — drop a real
- * photo there later and update the path, no component changes needed.
+ * It has no unit/package pricing on purpose: the old global pack rule (10 units,
+ * −₪10) that used to be derived from `unitPrice` lives only in the generators.
  *
  * Prices synced from the store's own Wolt menu (2026-09-14).
  */
 
+/** A product as originally listed (before per-option pricing existed). */
+export type SeedProduct = Omit<Product, "unit" | "package" | "nameEn">;
+
 const PLACEHOLDER_IMAGE = "/images/products/placeholder.svg";
 
-export const products: Product[] = [
+export const products: SeedProduct[] = [
   // ---- סיגריות: מרלבורו ----
   {
     id: "1",
@@ -1353,6 +1356,6 @@ export const products: Product[] = [
 ];
 
 /** Products belonging to a given category slug (see `src/data/categories.ts`). */
-export function getProductsByCategory(categorySlug: string): Product[] {
+export function getProductsByCategory(categorySlug: string): SeedProduct[] {
   return products.filter((product) => product.category === categorySlug);
 }

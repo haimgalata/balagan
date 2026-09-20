@@ -1,6 +1,16 @@
 import { test, expect, gotoReady, cartBadge, cartFixtures, buildRpcCatalog, baseline, rpcOk, rpcStatus, rpcRaw, RPC_URL } from "./fixtures";
 
-const multiCart = cartFixtures.find((f) => f.name === "multi-product")!.storageValue; // 26 units
+const multiCart = cartFixtures.find((f) => f.name === "multi-product")!.storageValue; // legacy payload: 12 + 3 + 1(out of stock) + 10 units
+/** What that legacy cart migrates to (the v2 cart): units stay units. */
+const multiCartV2 = JSON.stringify([
+  { productId: "1", option: "unit", quantity: 12 },
+  { productId: "2", option: "unit", quantity: 3 },
+  { productId: "3", option: "unit", quantity: 1 },
+  { productId: "58", option: "unit", quantity: 10 },
+]);
+const LEGACY_KEY = "balagan_cart";
+const V2_KEY = "balagan_cart_v2";
+const PURCHASABLE_ITEMS = "25"; // 12 + 3 + 10 — product 3 is out of stock, so it is shown as "אזל" and not counted
 const cardsLocator = "div.snap-start";
 const cacheJson = (catalog: unknown) => JSON.stringify({ v: 1, savedAt: 0, data: catalog });
 const readLs = (page: import("@playwright/test").Page, key: string) => page.evaluate((k) => localStorage.getItem(k), key);
@@ -20,12 +30,14 @@ test.describe("catalog loading — database source", () => {
       await expect(page.getByRole("status").filter({ hasText: "טוען מוצרים" })).toBeVisible();
       await expect(page.locator(cardsLocator)).toHaveCount(0);
       expect(await cartBadge(page)).toBe(""); // lines can't be priced until the catalog exists…
-      expect(await readLs(page, "balagan_cart")).toBe(multiCart); // …but the stored cart is untouched
+      expect(await readLs(page, V2_KEY)).toBe(multiCartV2); // …but nothing is erased: the whole cart is kept
+      expect(await readLs(page, LEGACY_KEY)).toBe(multiCart); // and the old key is never touched
 
       await expect(page.locator(cardsLocator).first()).toBeVisible({ timeout: 10_000 });
       await expect(page.getByRole("status").filter({ hasText: "טוען מוצרים" })).toHaveCount(0);
-      expect(await cartBadge(page)).toBe("26"); // the SAME saved cart now prices correctly
-      expect(await readLs(page, "balagan_cart")).toBe(multiCart);
+      expect(await cartBadge(page)).toBe(PURCHASABLE_ITEMS); // the SAME saved cart now prices correctly
+      expect(await readLs(page, V2_KEY)).toBe(multiCartV2);
+      expect(await readLs(page, LEGACY_KEY)).toBe(multiCart);
 
       const cached = JSON.parse((await readLs(page, "balagan_catalog_v1"))!);
       expect(cached.data.products).toHaveLength(baseline.totals.products);
@@ -44,8 +56,9 @@ test.describe("catalog loading — database source", () => {
         await page.route(RPC_URL, handler);
         await gotoReady(page);
         await expect(page.locator(cardsLocator)).toHaveCount(110);
-        expect(await cartBadge(page)).toBe("26");
-        expect(await readLs(page, "balagan_cart")).toBe(multiCart);
+        expect(await cartBadge(page)).toBe(PURCHASABLE_ITEMS);
+        expect(await readLs(page, V2_KEY)).toBe(multiCartV2);
+        expect(await readLs(page, LEGACY_KEY)).toBe(multiCart);
         expect(await readLs(page, "balagan_catalog_v1")).toBeNull(); // a failed fetch never poisons the cache
       });
     }
@@ -55,7 +68,8 @@ test.describe("catalog loading — database source", () => {
       await page.route(RPC_URL, () => { /* never fulfil */ });
       await page.goto("/");
       await expect(page.locator(cardsLocator).first()).toBeVisible({ timeout: 15_000 }); // 8s client timeout
-      expect(await readLs(page, "balagan_cart")).toBe(multiCart);
+      expect(await readLs(page, V2_KEY)).toBe(multiCartV2);
+      expect(await readLs(page, LEGACY_KEY)).toBe(multiCart);
     });
   });
 
@@ -76,7 +90,9 @@ test.describe("catalog loading — database source", () => {
 
       // after the background refresh: the DB change is on screen and in the cache
       await expect(first).toContainText("₪55", { timeout: 10_000 });
-      await expect(first).toContainText("₪550"); // pack price still derived from unitPrice until Step 4
+      // the package has its OWN stored price and sale — changing the unit price does not move it
+      await expect(first).toContainText("₪510");
+      await expect(first).toContainText("₪500");
       const cached = JSON.parse((await readLs(page, "balagan_catalog_v1"))!);
       expect(cached.data.products.find((p: { id: string }) => p.id === "1").unit.price).toBe(55);
     });
@@ -100,13 +116,14 @@ test.describe("catalog loading — database source", () => {
 
   test.describe("product hidden/removed in the database while it is in a saved cart", () => {
     const cart = JSON.stringify([{ productId: "2", quantity: 3 }, { productId: "1", quantity: 1 }]);
+    const cartV2 = JSON.stringify([{ productId: "2", option: "unit", quantity: 3 }, { productId: "1", option: "unit", quantity: 1 }]);
     test.use({ savedCart: cart });
 
     test("its line disappears from the visible cart but is NOT erased from storage; it returns with the product", async ({ page }) => {
       await page.route(RPC_URL, rpcOk(buildRpcCatalog((ps) => ps.filter((p) => p.id !== "2"))));
       await gotoReady(page);
       expect(await cartBadge(page)).toBe("1"); // only product 1 is priced
-      expect(await readLs(page, "balagan_cart")).toBe(cart); // product 2's line survives
+      expect(await readLs(page, V2_KEY)).toBe(cartV2); // product 2's line survives
 
       await page.route(RPC_URL, rpcOk(buildRpcCatalog()));
       await page.reload();

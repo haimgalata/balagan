@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const { products } = await import(new URL("../../src/data/products.ts", import.meta.url));
-const { UNITS_PER_PACK, getPriceBreakdown } = await import(new URL("../../src/lib/pricing.ts", import.meta.url));
+const { UNITS_PER_PACK, getPriceBreakdown } = await import(new URL("../legacy/old-pricing.mjs", import.meta.url));
 
 const byId = new Map(products.map((p) => [p.id, p]));
 

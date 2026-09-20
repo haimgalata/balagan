@@ -63,14 +63,15 @@ test("search finds the same products as before and adds to the cart", async ({ p
   expect(await cartBadge(page)).toBe("1");
 });
 
-test("add a unit and a pack from a card: totals and old pack pricing unchanged", async ({ page }) => {
+test("add a unit and a package from a card: two separate lines, badge counts purchase items", async ({ page }) => {
   await gotoReady(page);
-  const card = page.locator("div.snap-start").first(); // מרלבורו אדום, unit ₪51
+  const card = page.locator("div.snap-start").first(); // מרלבורו אדום, unit ₪51, package פקט ₪500
   await card.getByRole("button", { name: "יחידה" }).click();
   await card.getByRole("button", { name: "פקט" }).click();
-  expect(await cartBadge(page)).toBe("11");
+  expect(await cartBadge(page)).toBe("2"); // 1 unit + 1 package = 2 items (not 11 units)
   await page.getByRole("button", { name: "פתיחת סל הקניות" }).first().click();
   await page.waitForTimeout(500);
-  // 11 units = 1 pack (₪500) + 1 unit (₪51) — the old model's automatic pack, unchanged in this step
-  await expect(page.locator('[role="dialog"][aria-label="סל הקניות"]')).toContainText("₪551");
+  const drawer = page.locator('[role="dialog"][aria-label="סל הקניות"]');
+  await expect(drawer.locator("li")).toHaveCount(2);
+  await expect(drawer).toContainText("₪551"); // ₪51 (unit) + ₪500 (package)
 });

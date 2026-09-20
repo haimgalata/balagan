@@ -76,8 +76,10 @@ export const rpcRaw = (body: string) => async (route: Route) => {
 type Opts = {
   /** false => the 21+ age gate is shown. */
   ageVerified: boolean;
-  /** raw localStorage["balagan_cart"] to pre-load, or null */
+  /** raw localStorage["balagan_cart"] (the LEGACY cart format) to pre-load, or null */
   savedCart: string | null;
+  /** raw localStorage["balagan_cart_v2"] (the current cart format) to pre-load, or null */
+  savedCartV2: string | null;
   /** raw localStorage["balagan_catalog_v1"] to pre-load, or null */
   catalogCache: string | null;
 };
@@ -85,23 +87,25 @@ type Opts = {
 export const test = base.extend<Opts & { mode: string; vp: string }>({
   ageVerified: [true, { option: true }],
   savedCart: [null, { option: true }],
+  savedCartV2: [null, { option: true }],
   catalogCache: [null, { option: true }],
   mode: async ({}, use, testInfo) => use(String(testInfo.project.metadata.mode)),
   vp: async ({}, use, testInfo) => use(String(testInfo.project.metadata.viewport)),
 
-  page: async ({ page, ageVerified, savedCart, catalogCache, mode }, use) => {
+  page: async ({ page, ageVerified, savedCart, savedCartV2, catalogCache, mode }, use) => {
     // deterministic: fixed clock (business-hours bar), no external web fonts, no animations
     await page.clock.setFixedTime(new Date("2026-09-20T10:00:00+03:00"));
     await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
     await page.addInitScript(
-      ([age, cart, cache]) => {
+      ([age, cart, cartV2, cache]) => {
         try {
           if (age) localStorage.setItem("balagan_age_verified", "true");
           if (cart !== null) localStorage.setItem("balagan_cart", cart);
+          if (cartV2 !== null) localStorage.setItem("balagan_cart_v2", cartV2);
           if (cache !== null) localStorage.setItem("balagan_catalog_v1", cache);
         } catch { /* ignore */ }
       },
-      [ageVerified, savedCart, catalogCache] as const
+      [ageVerified, savedCart, savedCartV2, catalogCache] as const
     );
     // the "supabase" variant talks to a fake host: answer its RPC with the seeded catalog (tests may override)
     if (mode === "supabase") await page.route(RPC_URL, rpcOk());
@@ -170,3 +174,29 @@ export const extractDomText = (page: Page) =>
     out.push("# total cards: " + section.querySelectorAll("div.snap-start").length);
     return out.join("\n");
   });
+
+// ------------------------------------------------------------------------ cart helpers
+export const DRAWER = '[role="dialog"][aria-label="סל הקניות"]';
+export const LEGACY_CART_KEY = "balagan_cart";
+export const V2_CART_KEY = "balagan_cart_v2";
+
+/** Opens the cart drawer and returns its locator. */
+export async function openCart(page: Page) {
+  await page.getByRole("button", { name: "פתיחת סל הקניות" }).first().click();
+  await page.waitForTimeout(500);
+  return page.locator(DRAWER);
+}
+
+const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/** Normalised text of one drawer row. */
+export const rowTexts = async (drawer: import("@playwright/test").Locator) =>
+  (await drawer.locator("li").allInnerTexts()).map(squash);
+
+/** The ₪ total shown in the drawer footer (null when the cart is empty). */
+export async function drawerTotal(drawer: import("@playwright/test").Locator): Promise<number | null> {
+  const match = /סה"כ לתשלום ₪([0-9.]+)/.exec(squash(await drawer.innerText()));
+  return match ? Number(match[1]) : null;
+}
+
+export const readLocalStorage = (page: Page, key: string) => page.evaluate((k) => localStorage.getItem(k), key);

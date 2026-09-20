@@ -1,65 +1,79 @@
 /**
- * Pack pricing rules.
+ * Pricing for the two things a customer can explicitly choose to buy: a single
+ * UNIT, or the product's optional PACKAGE. Each option has its own regular price
+ * and its own optional sale, all read from the product (i.e. from the database).
  *
- * A pack always contains `UNITS_PER_PACK` units. Pack prices are always
- * derived from a product's `unitPrice` — never hardcode a pack price
- * separately in data or components.
+ * There is NO global pack rule here: a package price is never computed from the
+ * unit price, and adding N single units never switches to the package price — the
+ * customer gets the package price only by choosing the package.
  *
- * The cart itself only ever stores a total unit quantity per product (see
- * `src/context/CartContext.tsx`) — the pack discount is derived from that
- * total automatically, regardless of whether the units were added one at a
- * time or via the "+ פקט" shortcut. `getPriceBreakdown` is the single place
- * that turns a quantity into packs/remaining-units/price.
+ * All arithmetic is done in integer agorot (cents) and formatted at the edge, so
+ * totals never show floating-point noise (9 × ₪44.9 is ₪404.1, not 404.09999999999997).
+ *
+ * This module is pure (type-only imports) so it can be unit-tested without a browser.
  */
+import type { Product, PurchaseOption } from "../types";
 
-export const UNITS_PER_PACK = 10;
-export const PACK_DISCOUNT = 10;
+export const UNIT_LABEL = "יחידה";
 
-/** Regular (pre-discount) pack price: `unitPrice * UNITS_PER_PACK`. */
-export function getRegularPackPrice(unitPrice: number): number {
-  return unitPrice * UNITS_PER_PACK;
-}
-
-/** Discounted pack price shown to customers: regular pack price minus `PACK_DISCOUNT`. */
-export function getPackPrice(unitPrice: number): number {
-  return getRegularPackPrice(unitPrice) - PACK_DISCOUNT;
-}
-
-export interface PriceBreakdown {
-  totalUnits: number;
-  /** How many full discounted packs fit into `totalUnits`. */
-  packs: number;
-  /** Units left over after taking out whole packs. */
-  remainingUnits: number;
-  /** Discounted price of a single pack for this product. */
-  packPrice: number;
-  /** What `totalUnits` would cost with no pack discount at all — for showing the discount. */
-  regularTotal: number;
-  /** How much cheaper `finalTotal` is than `regularTotal`. */
-  discount: number;
-  /** What the customer actually pays. */
-  finalTotal: number;
+/** ₪ amount (possibly with decimals, as stored) -> integer agorot. */
+export function toCents(amount: number): number {
+  return Math.round(amount * 100);
 }
 
 /**
- * Every group of `UNITS_PER_PACK` units in `totalUnits` is automatically
- * priced as a discounted pack — the customer never loses the discount for
- * having added units one at a time instead of via the pack shortcut.
+ * Integer agorot -> display number without the ₪ sign, exactly as prices have always
+ * looked on the site: 5100 -> "51", 4490 -> "44.9", 40410 -> "404.1", 5 -> "0.05".
  */
-export function getPriceBreakdown(unitPrice: number, totalUnits: number): PriceBreakdown {
-  const packs = Math.floor(totalUnits / UNITS_PER_PACK);
-  const remainingUnits = totalUnits % UNITS_PER_PACK;
-  const packPrice = getPackPrice(unitPrice);
-  const finalTotal = packs * packPrice + remainingUnits * unitPrice;
-  const regularTotal = totalUnits * unitPrice;
+export function formatPrice(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(Math.round(cents));
+  const shekels = Math.floor(abs / 100);
+  const agorot = abs % 100;
+  if (agorot === 0) return `${sign}${shekels}`;
+  if (agorot % 10 === 0) return `${sign}${shekels}.${agorot / 10}`;
+  return `${sign}${shekels}.${String(agorot).padStart(2, "0")}`;
+}
 
-  return {
-    totalUnits,
-    packs,
-    remainingUnits,
-    packPrice,
-    regularTotal,
-    discount: regularTotal - finalTotal,
-    finalTotal,
-  };
+export interface OptionPricing {
+  /** Regular price, agorot. */
+  regularCents: number;
+  /** Active sale price, agorot, or null when there is no active sale. */
+  saleCents: number | null;
+  /** What the customer pays per item: the sale price when a sale is active, else the regular price. */
+  effectiveCents: number;
+  onSale: boolean;
+}
+
+/**
+ * Pricing of one option of a product, or null when the product does not have that
+ * option (no package). A sale counts only if it is a real reduction (lower than the regular price).
+ */
+export function getOptionPricing(product: Product, option: PurchaseOption): OptionPricing | null {
+  const data = option === "unit" ? product.unit : product.package;
+  if (!data) return null;
+  const regularCents = toCents(data.price);
+  const saleCents = data.salePrice !== null && toCents(data.salePrice) < regularCents ? toCents(data.salePrice) : null;
+  return { regularCents, saleCents, effectiveCents: saleCents ?? regularCents, onSale: saleCents !== null };
+}
+
+/** Customer-facing name of an option: "יחידה" for the unit, the product's own label for the package. */
+export function getOptionLabel(product: Product, option: PurchaseOption): string {
+  return option === "package" && product.package ? product.package.label : UNIT_LABEL;
+}
+
+/** True when the option exists and can currently be bought. */
+export function isOptionInStock(product: Product, option: PurchaseOption): boolean {
+  const data = option === "unit" ? product.unit : product.package;
+  return data ? data.inStock : false;
+}
+
+/** Total for `quantity` of an option, agorot. */
+export function getLineTotalCents(pricing: OptionPricing, quantity: number): number {
+  return pricing.effectiveCents * quantity;
+}
+
+/** How much cheaper `quantity` of an option is than at its regular price, agorot (0 when not on sale). */
+export function getSavingsCents(pricing: OptionPricing, quantity: number): number {
+  return (pricing.regularCents - pricing.effectiveCents) * quantity;
 }

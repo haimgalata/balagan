@@ -1,9 +1,13 @@
 /**
  * Shared TypeScript types for the store.
- * Keep these in sync with the shapes used in `src/data/*`.
+ * The catalog comes from the database (see `src/lib/catalogApi.ts`); the bundled
+ * fallback in `src/data/fallbackCatalog.ts` has the same shape.
  */
 
-/** One purchasable option (the unit, or the optional package). Read from the database catalog. */
+/** What the customer can choose to buy: a single unit, or the product's optional package. */
+export type PurchaseOption = "unit" | "package";
+
+/** One purchasable option (the unit, or the optional package). */
 export interface ProductOption {
   /** Regular price. */
   price: number;
@@ -15,35 +19,31 @@ export interface ProductOption {
 export interface ProductPackage extends ProductOption {
   /** Custom label such as "פקט" / "מארז" / "שישייה". */
   label: string;
-  /** How many units the package contains (descriptive; not used for pricing). */
+  /** How many units the package contains (descriptive; never used to compute a price). */
   unitCount: number;
 }
 
 export interface Product {
   id: string;
   name: string;
-  /** English name (database catalog only). */
+  /** English name. */
   nameEn?: string;
-  /**
-   * Full option data from the database catalog. Not used by the storefront UI yet
-   * (it still derives pack prices from `unitPrice`, see `src/lib/pricing.ts`) —
-   * present so the explicit-option cart can switch over without a data change.
-   */
-  unit?: ProductOption;
-  package?: ProductPackage | null;
-  /** Category slug — must match a `slug` in `src/data/categories.ts` */
+  /** The required unit option — every product has one. */
+  unit: ProductOption;
+  /** The optional package option, or null when the product is sold by the unit only. */
+  package: ProductPackage | null;
+  /** Category slug — matches a category `slug` in the catalog. */
   category: string;
   brand: string;
   /**
-   * Explicit subcategory slug (see `src/data/categories.ts`). Prefer this
-   * over relying on `brand`'s derived slug when a brand name doesn't
-   * slugify to the same value as its subcategory (e.g. punctuation,
-   * transliteration differences) — see `CategorySection`.
+   * Explicit subcategory slug from the catalog. `CategorySection` groups products by it
+   * (falling back to a slug derived from `brand` when it is absent).
    */
   subcategorySlug?: string;
-  /** Price of a single unit. Pack pricing is always derived from this — see `src/lib/pricing.ts`. */
+  /** Regular price of a single unit (same as `unit.price`; kept for the storefront's existing consumers). */
   unitPrice: number;
   image: string;
+  /** True when at least one option can be bought (the "אזל" badge shows when this is false). */
   inStock: boolean;
   /** Optional short description shown on product details/cards */
   description?: string;
@@ -65,11 +65,12 @@ export interface Category {
 }
 
 /**
- * `quantity` is always the TOTAL number of individual units of this product
- * in the cart — there is no separate "pack" line. Packs (and their discount)
- * are derived from this total on the fly, see `src/lib/pricing.ts`.
+ * A cart line is identified by product + option. `quantity` counts THAT option
+ * (2 packages = quantity 2, never 20 units). The same product can appear as two
+ * independent lines (units and package); nothing is ever converted between them.
  */
 export interface CartItem {
   productId: string;
+  option: PurchaseOption;
   quantity: number;
 }

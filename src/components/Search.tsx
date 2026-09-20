@@ -4,6 +4,7 @@ import { SearchIcon, X, PackageX } from "lucide-react";
 import { useCatalog } from "@/context/CatalogContext";
 import { useCart } from "@/context/CartContext";
 import { Button } from "@/components/ui/Button";
+import { formatPrice, getOptionPricing } from "@/lib/pricing";
 
 /**
  * Header search — filters the local mock product catalog only
@@ -22,7 +23,7 @@ import { Button } from "@/components/ui/Button";
 export function Search() {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const { addUnits } = useCart();
+  const { addItem } = useCart();
   const { products } = useCatalog();
 
   useEffect(() => {
@@ -101,34 +102,42 @@ export function Search() {
                   </div>
                 )}
 
-                {results.map((product) => (
-                  <div
-                    key={product.id}
-                    className="flex items-center gap-4 rounded-lg border border-brand-border bg-brand-bg-elevated p-3"
-                  >
-                    <img
-                      src={product.image}
-                      alt={product.name}
-                      className="h-16 w-16 shrink-0 rounded-md object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium text-brand-text">{product.name}</p>
-                      <p className="text-sm text-brand-text-muted">{product.brand}</p>
-                      <p className="font-semibold text-brand-gold">₪{product.unitPrice}</p>
-                    </div>
-                    <Button
-                      size="sm"
-                      disabled={!product.inStock}
-                      onClick={(event) => {
-                        addUnits(product.id, 1);
-                        event.currentTarget.blur();
-                      }}
-                      className="shrink-0"
+                {results.map((product) => {
+                  const unitPricing = getOptionPricing(product, "unit");
+                  return (
+                    <div
+                      key={product.id}
+                      className="flex items-center gap-4 rounded-lg border border-brand-border bg-brand-bg-elevated p-3"
                     >
-                      הוסף לסל
-                    </Button>
-                  </div>
-                ))}
+                      <img
+                        src={product.image}
+                        alt={product.name}
+                        className="h-16 w-16 shrink-0 rounded-md object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-brand-text">{product.name}</p>
+                        <p className="text-sm text-brand-text-muted">{product.brand}</p>
+                        <p className="font-semibold text-brand-gold">
+                          {unitPricing?.onSale && (
+                            <span className="me-1.5 text-brand-danger line-through">₪{formatPrice(unitPricing.regularCents)}</span>
+                          )}
+                          ₪{formatPrice(unitPricing?.effectiveCents ?? 0)}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={!product.unit.inStock}
+                        onClick={(event) => {
+                          addItem(product.id, "unit");
+                          event.currentTarget.blur();
+                        }}
+                        className="shrink-0"
+                      >
+                        הוסף לסל
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>,

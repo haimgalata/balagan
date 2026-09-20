@@ -1,7 +1,7 @@
 import { defineConfig, type PlaywrightTestConfig } from "@playwright/test";
 
 /**
- * Step 3 regression suite: the storefront must look and behave EXACTLY like the
+ * Storefront regression suite (tests/step3, tests/step4): the storefront must look and behave like the
  * pre-migration baseline (tag `baseline/pre-product-management`), whether the
  * catalog comes from the bundled files ("static") or from the database ("supabase").
  *
@@ -74,9 +74,11 @@ const servers: NonNullable<PlaywrightTestConfig["webServer"]> = baselineDir
     ];
 
 export default defineConfig({
-  testDir: "./tests/step3",
+  testDir: "./tests",
+  // Pure unit tests (no browser) live in *.unit.spec.ts and run via playwright.unit.config.ts.
+  testIgnore: /.*.unit.spec.ts$/,
   // Same snapshot for every mode/project of a given viewport: the whole point is that they must be identical.
-  snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
+  snapshotPathTemplate: "{snapshotDir}/{testFileDir}/__screenshots__/{testFileName}/{arg}{ext}",
   timeout: 90_000,
   fullyParallel: true,
   workers: 2,

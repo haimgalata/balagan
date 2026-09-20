@@ -1,10 +1,15 @@
-import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCatalog } from "@/context/CatalogContext";
-import { UNITS_PER_PACK, getPriceBreakdown, type PriceBreakdown } from "@/lib/pricing";
-import type { CartItem, Product } from "@/types";
-import { useLocalStorage } from "@/hooks/useLocalStorage";
-
-const CART_STORAGE_KEY = "balagan_cart";
+import { CART_STORAGE_KEY, loadCart } from "@/lib/cartStorage";
+import {
+  getLineTotalCents,
+  getOptionLabel,
+  getOptionPricing,
+  getSavingsCents,
+  isOptionInStock,
+  type OptionPricing,
+} from "@/lib/pricing";
+import type { CartItem, Product, PurchaseOption } from "@/types";
 
 /** Hebrew add-to-cart confirmation, always built from the actual product name — never hardcoded. */
 function getAddToCartMessage(productName: string): string {
@@ -16,26 +21,38 @@ export interface CartToast {
   message: string;
 }
 
+/** One line of the cart: a product + the option the customer explicitly chose. */
 export interface CartLine {
+  /** Stable React key: `${productId}:${option}`. */
+  key: string;
   product: Product;
-  /** Total units of this product in the cart. */
+  option: PurchaseOption;
+  /** How many of THIS option (2 packages = 2, never 20 units). */
   quantity: number;
-  breakdown: PriceBreakdown;
+  /** "יחידה" or the product's package label. */
+  label: string;
+  pricing: OptionPricing;
+  lineTotalCents: number;
+  /** Saved versus the regular price, agorot (0 when not on sale). */
+  savingsCents: number;
+  /** False when this option is currently out of stock — shown as "אזל" and left out of count and total. */
+  available: boolean;
 }
 
 interface CartContextValue {
   lines: CartLine[];
-  /** Total physical units across the whole cart. */
+  /** Purchase items in the cart: one package counts as 1, two units as 2 (out-of-stock lines excluded). */
   totalCount: number;
-  totalPrice: number;
+  /** Cart total in agorot (out-of-stock lines excluded); format with `formatPrice`. */
+  totalPriceCents: number;
   isOpen: boolean;
   openCart: () => void;
   closeCart: () => void;
-  /** Adds `quantity` units of a product. Never opens the cart — the user keeps shopping. */
-  addUnits: (productId: string, quantity: number) => void;
-  increment: (productId: string) => void;
-  decrement: (productId: string) => void;
-  removeItem: (productId: string) => void;
+  /** Adds `quantity` of the option the customer chose. Never opens the cart — the user keeps shopping. */
+  addItem: (productId: string, option: PurchaseOption, quantity?: number) => void;
+  increment: (productId: string, option: PurchaseOption) => void;
+  decrement: (productId: string, option: PurchaseOption) => void;
+  removeLine: (productId: string, option: PurchaseOption) => void;
   /** Most recent "added to cart" toast, or null once dismissed/expired. */
   toast: CartToast | null;
   dismissToast: () => void;
@@ -43,105 +60,118 @@ interface CartContextValue {
 
 const CartContext = createContext<CartContextValue | undefined>(undefined);
 
-/**
- * Cleans whatever was read from localStorage before it becomes cart state.
- * The cart model is "quantity = total units for a product". This also
- * migrates the older per-line-type (separate unit/pack lines) cart shape
- * into that model — a stored "pack" line's quantity counted packs, not
- * units, so it's expanded ×`UNITS_PER_PACK` here — and drops anything with a
- * malformed id or a bad quantity, so a corrupted cart never crashes the app.
- *
- * Deliberately does NOT check ids against the catalog: the catalog is loaded
- * asynchronously (and products can be hidden/removed in the admin), so an id
- * that can't be resolved right now must not be erased from storage. Such lines
- * are simply not rendered or priced — see `lines` below — and reappear if the
- * product does.
- */
-function sanitizeCartItems(raw: CartItem[]): CartItem[] {
-  if (!Array.isArray(raw)) return [];
-
-  const totals = new Map<string, number>();
-  for (const entry of raw as unknown as Array<Record<string, unknown>>) {
-    if (!entry || typeof entry.productId !== "string") continue;
-
-    const rawQuantity = typeof entry.quantity === "number" ? Math.floor(entry.quantity) : 0;
-    if (rawQuantity <= 0) continue;
-
-    const units = entry.type === "pack" ? rawQuantity * UNITS_PER_PACK : rawQuantity;
-    totals.set(entry.productId, (totals.get(entry.productId) ?? 0) + units);
+function readInitialCart(): CartItem[] {
+  try {
+    return loadCart(window.localStorage);
+  } catch {
+    return []; // storage unavailable (private mode etc.)
   }
-
-  return Array.from(totals.entries()).map(([productId, quantity]) => ({ productId, quantity }));
 }
 
+/**
+ * Cart state. Lines are (product, option) pairs kept under `balagan_cart_v2`; prices are never stored —
+ * they are read live from the catalog, so a price change in the admin shows immediately. The previous
+ * cart format is migrated once from `balagan_cart` (see `src/lib/cartStorage.ts`) and that old key is
+ * never written or removed.
+ *
+ * A stored line whose product/option can't be resolved right now (catalog still loading, product hidden,
+ * package removed) is not rendered or priced but stays in storage, and reappears if the product does.
+ */
 export function CartProvider({ children }: { children: ReactNode }) {
   const { products } = useCatalog();
-  const [items, setItems] = useLocalStorage<CartItem[]>(CART_STORAGE_KEY, [], sanitizeCartItems);
+  const [items, setItems] = useState<CartItem[]>(readInitialCart);
   const [isOpen, setIsOpen] = useState(false);
   const [toast, setToast] = useState<CartToast | null>(null);
   const nextToastId = useRef(0);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items));
+    } catch {
+      // localStorage unavailable (private mode, quota, etc.) — fail silently
+    }
+  }, [items]);
+
+  const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+
   const dismissToast = () => setToast(null);
 
-  const addUnits = (productId: string, quantity: number) => {
+  const addItem = (productId: string, option: PurchaseOption, quantity = 1) => {
+    const product = productsById.get(productId);
+    // Only options that exist and can be bought (the UI disables the buttons; this is the guard).
+    if (!product || !isOptionInStock(product, option)) return;
+
     setItems((prev) => {
-      const existing = prev.find((item) => item.productId === productId);
+      const existing = prev.find((item) => item.productId === productId && item.option === option);
       if (existing) {
-        return prev.map((item) =>
-          item.productId === productId ? { ...item, quantity: item.quantity + quantity } : item
-        );
+        return prev.map((item) => (item === existing ? { ...item, quantity: item.quantity + quantity } : item));
       }
-      return [...prev, { productId, quantity }];
+      return [...prev, { productId, option, quantity }];
     });
     nextToastId.current += 1;
-    const product = products.find((p) => p.id === productId);
-    setToast({ id: nextToastId.current, message: getAddToCartMessage(product?.name ?? "") });
+    setToast({ id: nextToastId.current, message: getAddToCartMessage(product.name) });
   };
 
-  const increment = (productId: string) => addUnits(productId, 1);
+  const increment = (productId: string, option: PurchaseOption) => addItem(productId, option, 1);
 
-  const decrement = (productId: string) => {
+  const decrement = (productId: string, option: PurchaseOption) => {
     setItems((prev) =>
       prev
-        .map((item) => (item.productId === productId ? { ...item, quantity: item.quantity - 1 } : item))
+        .map((item) =>
+          item.productId === productId && item.option === option ? { ...item, quantity: item.quantity - 1 } : item
+        )
         .filter((item) => item.quantity > 0)
     );
   };
 
-  const removeItem = (productId: string) => {
-    setItems((prev) => prev.filter((item) => item.productId !== productId));
+  const removeLine = (productId: string, option: PurchaseOption) => {
+    setItems((prev) => prev.filter((item) => !(item.productId === productId && item.option === option)));
   };
 
   const lines: CartLine[] = useMemo(
     () =>
-      items
-        .map((item) => {
-          const product = products.find((p) => p.id === item.productId);
-          if (!product) return null;
-          return {
+      items.flatMap((item) => {
+        const product = productsById.get(item.productId);
+        if (!product) return [];
+        const pricing = getOptionPricing(product, item.option);
+        if (!pricing) return [];
+        return [
+          {
+            key: `${item.productId}:${item.option}`,
             product,
+            option: item.option,
             quantity: item.quantity,
-            breakdown: getPriceBreakdown(product.unitPrice, item.quantity),
-          };
-        })
-        .filter((line): line is CartLine => line !== null),
-    [items, products]
+            label: getOptionLabel(product, item.option),
+            pricing,
+            lineTotalCents: getLineTotalCents(pricing, item.quantity),
+            savingsCents: getSavingsCents(pricing, item.quantity),
+            available: isOptionInStock(product, item.option),
+          },
+        ];
+      }),
+    [items, productsById]
   );
 
-  const totalCount = useMemo(() => lines.reduce((sum, l) => sum + l.quantity, 0), [lines]);
-  const totalPrice = useMemo(() => lines.reduce((sum, l) => sum + l.breakdown.finalTotal, 0), [lines]);
+  const totalCount = useMemo(
+    () => lines.reduce((sum, line) => (line.available ? sum + line.quantity : sum), 0),
+    [lines]
+  );
+  const totalPriceCents = useMemo(
+    () => lines.reduce((sum, line) => (line.available ? sum + line.lineTotalCents : sum), 0),
+    [lines]
+  );
 
   const value: CartContextValue = {
     lines,
     totalCount,
-    totalPrice,
+    totalPriceCents,
     isOpen,
     openCart: () => setIsOpen(true),
     closeCart: () => setIsOpen(false),
-    addUnits,
+    addItem,
     increment,
     decrement,
-    removeItem,
+    removeLine,
     toast,
     dismissToast,
   };

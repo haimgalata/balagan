@@ -1,17 +1,13 @@
 import type { Category } from "@/types";
 
 /**
- * Site navigation data.
+ * ORIGINAL static navigation data — now only the SOURCE for one-off scripts
+ * (seed / fallback-catalog generators, baseline capture). The storefront reads
+ * categories from the database (fallback: `src/data/fallbackCatalog.ts`); manage
+ * categories in the admin. Editing this file changes nothing on the site.
  *
- * This is the ONLY place category/brand structure is defined.
- * `CategoryCard` (homepage category buttons) and `CategorySection`
- * (brand headings + product sliders) both render from this array —
- * adding a category or subcategory here is enough, no component
- * changes are needed.
- *
- * `slug` on a category must match the `category` field used in
- * `src/data/products.ts`. `slug` on a subcategory is used to filter
- * products by brand within that category.
+ * `slug` on a category matches the `category` field in `src/data/products.ts`.
+ * `slug` on a subcategory matches the product's brand-derived slug within that category.
  */
 export const categories: Category[] = [
   {

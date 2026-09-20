@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Product } from "@/types";
-import { categories as staticCategories } from "@/data/categories";
-import { products as staticProducts } from "@/data/products";
+import { fallbackCatalog } from "@/data/fallbackCatalog";
 import { fetchCatalog, getCatalogConfig, parseRpcCatalog, type RpcCatalog } from "@/lib/catalogApi";
 import { mapCatalog, type MappedCatalog } from "@/lib/catalogMapper";
 
@@ -44,7 +43,11 @@ function writeCache(catalog: RpcCatalog): void {
   }
 }
 
-const STATIC_CATALOG: MappedCatalog = { categories: staticCategories, products: staticProducts };
+/**
+ * Offline fallback: a literal snapshot in the database's own shape (src/data/fallbackCatalog.ts), run
+ * through the SAME mapper as live data — one code path, and no pricing rule anywhere in the app.
+ */
+const STATIC_CATALOG: MappedCatalog = mapCatalog(fallbackCatalog, config.supabaseUrl);
 
 function initialState(): { state: CatalogState; shownJson: string | null } {
   if (config.source === "static") {
@@ -63,7 +66,7 @@ function initialState(): { state: CatalogState; shownJson: string | null } {
 /**
  * Single source of the storefront's catalog.
  *
- *  - `VITE_CATALOG_SOURCE=static` (or no Supabase env): the bundled `src/data` files, as before.
+ *  - `VITE_CATALOG_SOURCE=static` (or no Supabase env): the bundled fallback catalog.
  *  - Otherwise: show the last successfully fetched catalog INSTANTLY if there is one
  *    (stale-while-revalidate), fetch the live catalog in the background and swap it in.
  *  - First-ever visit (no cache): status is "loading" until the fetch finishes.

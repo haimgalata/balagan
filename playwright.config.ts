@@ -83,7 +83,8 @@ export default defineConfig({
   fullyParallel: true,
   workers: 2,
   reporter: [["list"]],
-  expect: { toHaveScreenshot: { animations: "disabled", maxDiffPixels: 0, scale: "css" } },
+  // 0 differing pixels allowed; the generous timeout only covers slow machines rendering multi-MB full-page images
+  expect: { toHaveScreenshot: { animations: "disabled", maxDiffPixels: 0, scale: "css", timeout: 30_000 } },
   projects: baselineDir
     ? [project("baseline", "desktop"), project("baseline", "mobile")]
     : [

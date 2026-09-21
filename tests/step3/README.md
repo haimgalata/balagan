@@ -1,4 +1,4 @@
-# Storefront regression suites (tests/step3 + tests/step4)
+# Regression suites (tests/step3 storefront, tests/step4 cart, tests/step5 admin)
 
 Proves the storefront reads its catalog from the database and still looks and behaves **exactly** like the
 pre-migration app (tag `baseline/pre-product-management`), for both catalog sources:
@@ -28,7 +28,13 @@ npx playwright test parity navigation catalog --project=supabase-desktop     # o
 - `tests/step4/cart-options.spec.ts` — the customer chooses unit or package explicitly (10 units = ₪510, 1 package = ₪500),
   the badge counts purchase items (2 units + 1 package = 3), independent lines/steppers, float-free totals, per-option
   sales/labels/availability, a product without a package.
-- `tests/step4/*.unit.spec.ts` — pure unit tests (`playwright.unit.config.ts`).
+- `tests/step4/*.unit.spec.ts`, `tests/step5/*.unit.spec.ts` — pure unit tests (`playwright.unit.config.ts`); `bundle.unit.spec.ts` does a real
+  production build and proves the admin code (incl. the Supabase client) is a separate on-demand chunk absent from the customer bundle.
+- `tests/step5/admin-auth.spec.ts` — the private `/admin`: login, generic errors (no user enumeration), non-admin refusal, session
+  persistence, sign-out, 60-minute idle logout, noindex. Uses an in-browser fake of Supabase Auth/is_admin()/admin tables
+  (stubbed-database variant only). `no-admin-links.spec.ts` proves nothing on the customer site links to or loads the admin.
+- `tests/step5/admin-live.spec.ts` *(optional, you run it)* — the same login against your real project; credentials come only
+  from environment variables (`LIVE_ADMIN_EMAIL`/`LIVE_ADMIN_PASSWORD`, optional `LIVE_USER_EMAIL`/`LIVE_USER_PASSWORD`).
 - `navigation.spec.ts` — deep links (incl. `#cigarettes-l&m`), footer links, tab counts, every subcategory lists its
   products in baseline order, search, adding a unit and a package as two separate lines.
 

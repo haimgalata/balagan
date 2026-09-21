@@ -78,6 +78,14 @@ alter sequence public.product_id_seq restart with 149;   -- only needed if it wa
 ```
 then run `seed.sql` again.
 
+## Using the admin area (Step 5)
+
+Open **`/admin`** on the site (locally: `http://localhost:5173/admin`) and sign in with the admin user you created in
+step 4 above. Nothing on the customer site links there — you reach it by typing the address. Your account must be in
+`admin_users`; any other account is refused and signed out. The dashboard shows counts read from the admin-only tables
+(categories, subcategories, products including hidden ones). You are signed out automatically after 60 minutes without activity.
+Reset a forgotten password in Supabase (Authentication → Users). Requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`.
+
 ## Design notes worth knowing
 
 - **Why anon can't just read `products`:** rows include barcode and stock counters, and hidden items. Anonymous visitors have *no* table access; `get_storefront_catalog()` returns an explicit whitelist (no barcode, no stock counts, no hidden rows).

@@ -9,6 +9,10 @@
  *   non-admin user   -> logged in but not in admin_users: no reads, no writes, no self-promotion
  *   admin            -> full CRUD; constraints reject bad prices/packages; storage works
  *
+ * Also covers the admin "Categories" support added by migration 0005: the reorder / product-count
+ * functions (anon and non-admin get nothing, admin can reorder) and the slug lock. If 0005 has not been
+ * applied yet, that section reports a SKIP (exit code 2) instead of failing.
+ *
  * Zero dependencies (plain fetch, Node >= 18). Uses ONLY the public anon key plus
  * test-account passwords supplied through the environment — never the
  * service-role key. Nothing secret is printed.
@@ -97,7 +101,7 @@ const upload = (p, token, bytes, type) => call("POST", storagePath(p), { token, 
 
 // probe fixtures (explicit ids => the product_id_seq sequence is never touched)
 const CAT = randomUUID(), SUB = randomUUID();
-const OTHER_CAT = randomUUID(), OTHER_SUB = randomUUID();
+const OTHER_CAT = randomUUID(), OTHER_SUB = randomUUID(), SUB2 = randomUUID();
 const PID = "900000001", PID_BAD = "900000002";
 const IMG = `products/${PID}/probe.png`;
 const BARCODE = "ZZ-SECURITY-PROBE-1";
@@ -111,7 +115,7 @@ async function cleanup() {
   const res = [];
   if (created.image) res.push(["storage object", (await call("DELETE", `${URL_}/storage/v1/object/product-images`, { token: adminToken, body: { prefixes: [IMG] } })).status < 300]);
   res.push(["products", (await rest("DELETE", `products?id=in.(${PID},${PID_BAD})`, { token: adminToken })).status < 300]);
-  res.push(["subcategories", (await rest("DELETE", `subcategories?id=in.(${SUB},${OTHER_SUB})`, { token: adminToken })).status < 300]);
+  res.push(["subcategories", (await rest("DELETE", `subcategories?id=in.(${SUB},${SUB2},${OTHER_SUB})`, { token: adminToken })).status < 300]);
   res.push(["categories", (await rest("DELETE", `categories?id=in.(${CAT},${OTHER_CAT})`, { token: adminToken })).status < 300]);
   const left = await rest("GET", `products?id=in.(${PID},${PID_BAD})&select=id`, { token: adminToken });
   const leftCat = await rest("GET", `categories?slug=like.zz-security-probe*&select=id`, { token: adminToken });
@@ -243,6 +247,75 @@ async function main() {
   // would reject this row instead of the test accidentally promoting a real account.
   r = await rest("POST", "admin_users", { token: adminToken, body: { user_id: randomUUID() } });
   check("even the admin cannot write admin_users through the API", isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+  // ------------------------------------- 3b. admin Categories support (migration 0005)
+  const probe0005 = await rpc("admin_product_counts", adminToken);
+  if (probe0005.status === 404 || pgCode(probe0005) === "PGRST202") {
+    skipped.push("admin Categories support (apply supabase/migrations/0005_admin_categories.sql, then re-run)");
+    section("Admin Categories support (0005)  --  SKIPPED: migration 0005 is not applied yet");
+  } else {
+    section("Admin Categories support (migration 0005)");
+    const denied404 = (x) => isDenied(x) || x.status === 404; // anon may get 401/403 (or 404 if the function is not visible to it)
+    for (const [name, args] of [
+      ["admin_reorder_categories", { p_ids: [CAT] }],
+      ["admin_reorder_subcategories", { p_category_id: CAT, p_ids: [SUB] }],
+      ["admin_product_counts", {}],
+    ]) {
+      r = await rpc(name, ANON, args);
+      check(`anon cannot call ${name}()`, denied404(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+
+    // admin: product counts (incl. hidden) — grouped, one query
+    check("admin_product_counts() returns grouped counts", probe0005.status === 200 && Array.isArray(probe0005.json) && probe0005.json.length > 0, `HTTP ${probe0005.status}`);
+    const total = (probe0005.json ?? []).reduce((n, row) => n + Number(row.product_count), 0);
+    check("counts cover every product, hidden ones included (>= 141 seeded + the hidden probe)", total >= 142, `total ${total}`);
+
+    // admin: slug lock (names stay editable, the slug does not)
+    r = await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { slug: "zz-security-probe-renamed" } });
+    check("the slug of a category cannot be changed after creation", r.status >= 400 && /slug cannot be changed/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+    r = await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { slug: "zz-renamed" } });
+    check("the slug of a subcategory cannot be changed after creation", r.status >= 400 && /slug cannot be changed/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+    r = await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { name_he: "שם חדש לבדיקה", name_en: "Probe" } });
+    check("names of a category can still be edited", r.status === 200 && r.json?.[0]?.name_he === "שם חדש לבדיקה", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    // admin: reorder — proven on the hidden PROBE subcategories only (real ordering is never touched)
+    r = await rest("POST", "subcategories", { token: adminToken, body: { id: SUB2, category_id: CAT, slug: "zz-security-probe-b", name_he: "תת בדיקה ב", is_visible: false, sort_order: 20 } });
+    check("(fixture) second probe subcategory created", r.status === 201, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { sort_order: 10 } });
+    const order = async () => (await rest("GET", `subcategories?category_id=eq.${CAT}&select=id,sort_order&order=sort_order.asc`, { token: adminToken })).json?.map((row) => row.id);
+    check("probe order before: [SUB, SUB2]", JSON.stringify(await order()) === JSON.stringify([SUB, SUB2]));
+
+    r = await rpc("admin_reorder_subcategories", adminToken, { p_category_id: CAT, p_ids: [SUB2, SUB] });
+    check("admin can reorder subcategories atomically", r.status < 300, `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+    check("...the new order is stored (10, 20, ...)", JSON.stringify(await order()) === JSON.stringify([SUB2, SUB]));
+    const rows = (await rest("GET", `subcategories?category_id=eq.${CAT}&select=id,sort_order&order=sort_order.asc`, { token: adminToken })).json ?? [];
+    check("...as sort_order 10 and 20", rows.map((row) => row.sort_order).join() === "10,20");
+
+    for (const [name, args] of [
+      ["missing one", { p_category_id: CAT, p_ids: [SUB2] }],
+      ["duplicate", { p_category_id: CAT, p_ids: [SUB2, SUB, SUB] }],
+      ["another category's subcategory", { p_category_id: CAT, p_ids: [SUB2, OTHER_SUB] }],
+      ["empty list", { p_category_id: CAT, p_ids: [] }],
+    ]) {
+      r = await rpc("admin_reorder_subcategories", adminToken, args);
+      check(`a bad subcategory list is rejected: ${name}`, r.status >= 400, `HTTP ${r.status}`);
+    }
+    check("...and the order is unchanged after all rejected lists", JSON.stringify(await order()) === JSON.stringify([SUB2, SUB]));
+
+    r = await rpc("admin_reorder_categories", adminToken, { p_ids: [CAT] }); // not ALL categories
+    check("a category list that is not exactly the existing categories is rejected", r.status >= 400 && /exactly the existing/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    // non-admin: sees nothing, changes nothing
+    if (userToken) {
+      r = await rpc("admin_product_counts", userToken);
+      check("a non-admin gets no product counts (RLS)", r.status === 200 && Array.isArray(r.json) && r.json.length === 0, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rpc("admin_reorder_subcategories", userToken, { p_category_id: CAT, p_ids: [SUB, SUB2] });
+      check("a non-admin's reorder is rejected", r.status >= 400, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      check("...and changed nothing", JSON.stringify(await order()) === JSON.stringify([SUB2, SUB]));
+      r = await rpc("admin_reorder_categories", userToken, { p_ids: [CAT] });
+      check("a non-admin's category reorder is rejected", r.status >= 400, `HTTP ${r.status}`);
+    }
+  }
 
   // -------------------------------------------------- 4. RPC shape when made public
   section("Public catalog output (probe made visible, then hidden again)");

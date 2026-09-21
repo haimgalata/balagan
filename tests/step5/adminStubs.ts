@@ -32,6 +32,25 @@ export interface StubOptions {
   /** refresh-token requests are rejected (an expired/revoked session) */
   refreshFails?: boolean;
   loginDelayMs?: number;
+  /**
+   * Plug-in handler for data requests (tables, RPCs). Called after the auth endpoints; return true when it
+   * handled the request. Used by the categories tests to stand in for the database's admin tables and functions.
+   */
+  extra?: (context: StubRequestContext) => Promise<boolean> | boolean;
+}
+
+/** What a plug-in handler (see `StubOptions.extra`) receives for each request to the fake Supabase. */
+export interface StubRequestContext {
+  route: Route;
+  method: string;
+  url: URL;
+  /** parsed JSON body, or null */
+  body: unknown;
+  /** raw request headers (lower-case names) */
+  headers: Record<string, string>;
+  /** the signed-in user from the bearer token, or null (anonymous key) */
+  user: StubUser | null;
+  json: (status: number, body: unknown, extraHeaders?: Record<string, string>) => Promise<void>;
 }
 
 export interface StubCall {
@@ -119,6 +138,14 @@ export async function stubSupabase(page: Page, options: StubOptions = {}) {
     if (url.pathname === "/auth/v1/user") {
       const user = byId(sub);
       return user ? json(route, 200, sessionFor(user).user) : json(route, 401, { code: 401, msg: "invalid JWT" });
+    }
+
+    // ---- plug-in handler (fake tables / RPCs for a specific test suite)
+    if (options.extra) {
+      let body: unknown = null;
+      try { body = request.postData() ? JSON.parse(request.postData()!) : null; } catch { body = null; }
+      const handled = await options.extra({ route, method: request.method(), url, body, headers: request.headers(), user: byId(sub), json: (status, payload, extraHeaders) => route.fulfill({ status, headers: { ...CORS, ...extraHeaders }, contentType: "application/json", body: payload === null ? "" : JSON.stringify(payload) }) });
+      if (handled) return;
     }
 
     // ---- is_admin()

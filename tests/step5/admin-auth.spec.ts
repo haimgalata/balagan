@@ -60,9 +60,10 @@ test.describe("logging in", () => {
     await expect(page.getByTestId("admin-email").or(page.getByText(ADMIN_USER.email))).toBeVisible();
     await expect(page.locator("dd")).toHaveText(["2", "32", "141"]);
     await expect(page.getByRole("button", { name: "התנתקות" })).toBeVisible();
-    // sections that arrive in later steps are shown as "soon", not as links
-    await expect(page.getByText("בקרוב")).toHaveCount(2);
-    await expect(page.getByRole("link", { name: "קטגוריות" })).toHaveCount(0);
+    // Categories is a real page now; Products arrives in a later step and is shown as "soon", not as a link
+    await expect(page.getByRole("link", { name: "קטגוריות" })).toBeVisible();
+    await expect(page.getByText("בקרוב")).toHaveCount(1);
+    await expect(page.getByRole("link", { name: "מוצרים" })).toHaveCount(0);
 
     // the guard asked the database, and every data request carried the admin's own token (never the anon key)
     expect(stub.to("/rest/v1/rpc/is_admin")).toHaveLength(1);

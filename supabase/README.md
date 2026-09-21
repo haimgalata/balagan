@@ -86,6 +86,21 @@ step 4 above. Nothing on the customer site links there — you reach it by typin
 (categories, subcategories, products including hidden ones). You are signed out automatically after 60 minutes without activity.
 Reset a forgotten password in Supabase (Authentication → Users). Requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`.
 
+## Categories screen (Step 6) — apply migration 0005 first
+
+`/admin/categories` needs one more migration. **SQL Editor → New query → paste `migrations/0005_admin_categories.sql` → Run**
+("Success. No rows returned"; it is re-runnable). It adds: an atomic reorder (`admin_reorder_categories` /
+`admin_reorder_subcategories`), a slug lock (a category/subcategory slug — the public `#anchor` — cannot change after creation),
+and `admin_product_counts()` (product counts per category/subcategory, hidden products included). All three run with the
+caller's own rights, so only an admin can use them; `anon` cannot call them. Until it is applied the Categories page says so.
+Then re-run `node scripts/security-test.mjs --check-signup` — it now also checks these functions and the slug lock
+(if 0005 is missing it reports a SKIP, exit code 2).
+
+On the page: expandable categories with their subcategories, Hebrew/English names, a visible/hidden switch (hiding a category or
+subcategory hides its products from the shop too), up/down ordering, add and delete. Delete is refused while something still holds
+products (or a category still has subcategories) — hide it instead. A new item's slug is suggested from its English name and can
+be edited only when creating.
+
 ## Design notes worth knowing
 
 - **Why anon can't just read `products`:** rows include barcode and stock counters, and hidden items. Anonymous visitors have *no* table access; `get_storefront_catalog()` returns an explicit whitelist (no barcode, no stock counts, no hidden rows).

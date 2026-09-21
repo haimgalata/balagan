@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ADMIN_ROOT, navigateAdmin, useAdminPath } from "@/admin/adminPath";
+import { CategoriesPage } from "@/admin/categories/CategoriesPage";
 
 interface AdminShellProps {
   email: string;
@@ -10,10 +11,10 @@ interface AdminShellProps {
   onSignOut: () => void;
 }
 
-/** Sections of the dashboard. Categories and products arrive in later steps and are shown as "בקרוב" until then. */
+/** Sections of the dashboard. Products arrives in a later step and is shown as "בקרוב" until then. */
 const NAV_ITEMS = [
   { label: "ראשי", path: ADMIN_ROOT, enabled: true },
-  { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: false },
+  { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true },
   { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: false },
 ] as const;
 
@@ -148,6 +149,8 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
             <h1 className="mb-4 text-xl font-bold text-brand-text">סקירה</h1>
             <AdminSummary client={client} />
           </>
+        ) : path === `${ADMIN_ROOT}/categories` ? (
+          <CategoriesPage client={client} />
         ) : (
           <NotFound />
         )}

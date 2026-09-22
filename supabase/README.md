@@ -166,6 +166,18 @@ reveal they exist, the response never contains a raw stock number, if 0007 is mi
 - **Deleting a category/subcategory that still has products** fails with SQLSTATE `23001` (`ON DELETE RESTRICT`; PostgREST returns HTTP 409). The admin UI should offer "hide" instead.
 - **Product ids** stay text (`"1"`…). New products get `149, 150, …` from `product_id_seq`; the seed must insert the old ids explicitly.
 
+## Deploying
+
+`.env.example` lists what the production build needs: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (anon/publishable
+key only — never the `service_role` key, anywhere), and `VITE_CATALOG_SOURCE`. Vite bakes these in at build time, so set
+the same values in your hosting provider's build settings.
+
+No host is configured in this repo yet. Whichever static host you pick must serve `index.html` for unknown paths (an
+"SPA fallback" / rewrite rule) — without it, going straight to `/admin` (or refreshing there) gets the host's own 404
+instead of the app, since there's no router and no literal file at that path. Netlify: `netlify.toml` with a
+`[[redirects]]` from `/*` to `/index.html` (status 200). Vercel: `vercel.json` with a `rewrites` entry for `/(.*)`  →
+`/index.html`. Cloudflare Pages does this automatically for a Vite build.
+
 ## How the SQL itself was checked
 
 The four migrations were replayed on a real Postgres engine (PGlite/WASM, PG 18) behind a Supabase-style shim

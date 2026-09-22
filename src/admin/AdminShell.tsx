@@ -4,6 +4,7 @@ import { Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ADMIN_ROOT, navigateAdmin, useAdminPath } from "@/admin/adminPath";
 import { CategoriesPage } from "@/admin/categories/CategoriesPage";
+import { ProductsPage } from "@/admin/products/ProductsPage";
 
 interface AdminShellProps {
   email: string;
@@ -11,11 +12,11 @@ interface AdminShellProps {
   onSignOut: () => void;
 }
 
-/** Sections of the dashboard. Products arrives in a later step and is shown as "בקרוב" until then. */
+/** Sections of the dashboard. */
 const NAV_ITEMS = [
   { label: "ראשי", path: ADMIN_ROOT, enabled: true },
   { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true },
-  { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: false },
+  { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true },
 ] as const;
 
 const SUMMARY_TABLES = [
@@ -151,6 +152,8 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
           </>
         ) : path === `${ADMIN_ROOT}/categories` ? (
           <CategoriesPage client={client} />
+        ) : path === `${ADMIN_ROOT}/products` ? (
+          <ProductsPage client={client} />
         ) : (
           <NotFound />
         )}

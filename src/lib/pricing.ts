@@ -77,3 +77,18 @@ export function getLineTotalCents(pricing: OptionPricing, quantity: number): num
 export function getSavingsCents(pricing: OptionPricing, quantity: number): number {
   return (pricing.regularCents - pricing.effectiveCents) * quantity;
 }
+
+/**
+ * How many BASE UNITS one of this option is: 1 for a unit, the package's unit count for a package (0 if the
+ * product has no package — shouldn't be asked, but never lets a package line silently count as 1).
+ * Used only to check the shared stock pool (see src/lib/stockApi.ts) — a unit and a package draw from the
+ * SAME count, so quantities must be compared in this common unit, never in "lines" or "packages".
+ */
+export function getOptionBaseUnits(product: Product, option: PurchaseOption): number {
+  return option === "package" ? (product.package?.unitCount ?? 0) : 1;
+}
+
+/** Base units `quantity` of an option represents (see getOptionBaseUnits). */
+export function getLineBaseUnits(product: Product, option: PurchaseOption, quantity: number): number {
+  return getOptionBaseUnits(product, option) * quantity;
+}

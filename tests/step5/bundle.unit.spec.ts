@@ -11,8 +11,13 @@ import { gzipSync } from "node:zlib";
  * is a separate, on-demand chunk — the customer never downloads it — and that the customer bundle stays lean.
  */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-/** Customer entry chunk before the admin existed (Step 4): 64,558 bytes gzipped. Allowed growth: 1.2 KB. */
-const CUSTOMER_GZIP_BEFORE_ADMIN = 64_558;
+/**
+ * Customer entry chunk baseline, gzipped. 64,558 bytes before the admin existed (Step 4); unchanged through
+ * Steps 5-7 (all admin-only growth stayed in the separate lazy chunk). 66,182 bytes after adding the cart's
+ * shared-stock quantity check (src/lib/stockApi.ts + the CartContext changes it needed) — the first deliberate
+ * customer-facing growth since Step 4. Allowed growth from here: 1.2 KB, for incidental future changes.
+ */
+const CUSTOMER_GZIP_BASELINE = 66_182;
 const ALLOWED_GROWTH = 1_200;
 
 test("admin code is a separate on-demand chunk; the customer bundle has none of it", async () => {
@@ -47,7 +52,7 @@ test("admin code is a separate on-demand chunk; the customer bundle has none of 
 
     // customer bundle size guard
     const gzip = gzipSync(Buffer.from(entry)).length;
-    expect(gzip, `customer entry chunk is ${gzip} bytes gzipped`).toBeLessThanOrEqual(CUSTOMER_GZIP_BEFORE_ADMIN + ALLOWED_GROWTH);
+    expect(gzip, `customer entry chunk is ${gzip} bytes gzipped`).toBeLessThanOrEqual(CUSTOMER_GZIP_BASELINE + ALLOWED_GROWTH);
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }

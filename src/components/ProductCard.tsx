@@ -115,7 +115,7 @@ export function ProductCard({ product }: ProductCardProps) {
             className="flex-1"
             disabled={!product.unit.inStock}
             onClick={(event) => {
-              addItem(product.id, "unit");
+              void addItem(product.id, "unit");
               // Drop focus so mobile browsers don't keep rendering the
               // tapped state after the click handler runs (see Button.tsx).
               event.currentTarget.blur();
@@ -131,7 +131,7 @@ export function ProductCard({ product }: ProductCardProps) {
               className="flex-1"
               disabled={!product.package.inStock}
               onClick={(event) => {
-                addItem(product.id, "package");
+                void addItem(product.id, "package");
                 event.currentTarget.blur();
               }}
             >

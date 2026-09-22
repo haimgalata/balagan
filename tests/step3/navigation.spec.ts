@@ -60,7 +60,7 @@ test("search finds the same products as before and adds to the cart", async ({ p
 
   await addButtons.first().click();
   await page.getByRole("button", { name: "סגור חיפוש" }).click();
-  expect(await cartBadge(page)).toBe("1");
+  await expect.poll(() => cartBadge(page)).toBe("1"); // addItem confirms availability asynchronously — wait for it to settle
 });
 
 test("add a unit and a package from a card: two separate lines, badge counts purchase items", async ({ page }) => {
@@ -68,7 +68,7 @@ test("add a unit and a package from a card: two separate lines, badge counts pur
   const card = page.locator("div.snap-start").first(); // מרלבורו אדום, unit ₪51, package פקט ₪500
   await card.getByRole("button", { name: "יחידה" }).click();
   await card.getByRole("button", { name: "פקט" }).click();
-  expect(await cartBadge(page)).toBe("2"); // 1 unit + 1 package = 2 items (not 11 units)
+  await expect.poll(() => cartBadge(page)).toBe("2"); // 1 unit + 1 package = 2 items (not 11 units); addItem confirms availability asynchronously
   await page.getByRole("button", { name: "פתיחת סל הקניות" }).first().click();
   await page.waitForTimeout(500);
   const drawer = page.locator('[role="dialog"][aria-label="סל הקניות"]');

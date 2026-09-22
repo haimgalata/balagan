@@ -102,7 +102,7 @@ for (const bp of base.products) {
 }
 
 // ---- nothing private in the public payload ---------------------------------------------------
-if (/"(barcode|unit_stock|package_stock|unit_track_stock|package_track_stock|unit_available|package_available|is_visible|sort_order|created_at|updated_at|user_id)"\s*:/.test(text)) diffs.push("public payload contains a private field");
+if (/"(barcode|stock_base_units|track_stock|unit_available|package_available|unit_in_stock|package_in_stock|is_visible|sort_order|created_at|updated_at|user_id)"\s*:/.test(text)) diffs.push("public payload contains a private field");
 checks += 1;
 
 console.log(`baseline: ${base.totals.products} products, ${base.totals.categories} categories, ${base.totals.subcategories} subcategories (checksum ${base.productsChecksumSha256.slice(0, 12)}…)`);

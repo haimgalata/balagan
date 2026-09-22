@@ -62,6 +62,31 @@ export const rpcOk = (catalog: unknown = buildRpcCatalog(), delayMs = 0) => asyn
   if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
   await route.fulfill({ status: 200, headers: CORS, contentType: "application/json", body: JSON.stringify(catalog) });
 };
+/**
+ * check_stock_availability() (supabase/migrations/0007_stock_availability.sql) — the cart's shared-stock
+ * quantity check. `unavailable` names product ids that should come back `available: false`; every other
+ * requested product defaults to available (matches reality: no baseline/seeded product tracks stock).
+ */
+export const STOCK_RPC_URL = "**/rest/v1/rpc/check_stock_availability";
+export const stockOk = (unavailable: readonly string[] = [], delayMs = 0) => async (route: Route) => {
+  if (route.request().method() === "OPTIONS") return preflight(route);
+  if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+  const body = JSON.parse(route.request().postData() ?? "{}") as { p_items?: { product_id: string; base_units: number }[] };
+  const result = (body.p_items ?? []).map((item) => ({ product_id: item.product_id, available: !unavailable.includes(item.product_id) }));
+  await route.fulfill({ status: 200, headers: CORS, contentType: "application/json", body: JSON.stringify(result) });
+};
+/** Same RPC, but with an actual numeric cap per product (base units) — mirrors `NOT track_stock OR stock_base_units >= base_units`. A product not listed has no limit. */
+export const stockLimited = (limits: Record<string, number>, delayMs = 0) => async (route: Route) => {
+  if (route.request().method() === "OPTIONS") return preflight(route);
+  if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+  const body = JSON.parse(route.request().postData() ?? "{}") as { p_items?: { product_id: string; base_units: number }[] };
+  const result = (body.p_items ?? []).map((item) => ({
+    product_id: item.product_id,
+    available: !(item.product_id in limits) || item.base_units <= limits[item.product_id],
+  }));
+  await route.fulfill({ status: 200, headers: CORS, contentType: "application/json", body: JSON.stringify(result) });
+};
+
 export const rpcStatus = (status: number, delayMs = 0) => async (route: Route) => {
   if (route.request().method() === "OPTIONS") return preflight(route);
   if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
@@ -108,7 +133,10 @@ export const test = base.extend<Opts & { mode: string; vp: string }>({
       [ageVerified, savedCart, savedCartV2, catalogCache] as const
     );
     // the "supabase" variant talks to a fake host: answer its RPC with the seeded catalog (tests may override)
-    if (mode === "supabase") await page.route(RPC_URL, rpcOk());
+    if (mode === "supabase") {
+      await page.route(RPC_URL, rpcOk());
+      await page.route(STOCK_RPC_URL, stockOk());
+    }
     await use(page);
   },
 });

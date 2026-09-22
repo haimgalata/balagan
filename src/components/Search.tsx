@@ -128,7 +128,7 @@ export function Search() {
                         size="sm"
                         disabled={!product.unit.inStock}
                         onClick={(event) => {
-                          addItem(product.id, "unit");
+                          void addItem(product.id, "unit");
                           event.currentTarget.blur();
                         }}
                         className="shrink-0"

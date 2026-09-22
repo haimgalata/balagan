@@ -9,9 +9,13 @@
  *   non-admin user   -> logged in but not in admin_users: no reads, no writes, no self-promotion
  *   admin            -> full CRUD; constraints reject bad prices/packages; storage works
  *
- * Also covers the admin "Categories" support added by migration 0005: the reorder / product-count
- * functions (anon and non-admin get nothing, admin can reorder) and the slug lock. If 0005 has not been
- * applied yet, that section reports a SKIP (exit code 2) instead of failing.
+ * Also covers the admin "Categories" support added by migration 0005 (the reorder / product-count
+ * functions, the slug lock), the admin "Products" support added by migration 0006 (shared inventory —
+ * one stock_base_units count plus independent unit_available/package_available switches — and the
+ * per-(category,subcategory) product reorder function), and the cart's shared-stock quantity check added by
+ * migration 0007 (check_stock_availability — never leaks the raw stock count, hidden products, or whether a
+ * product exists). If a migration has not been applied yet, its section reports a SKIP (exit code 2) instead
+ * of failing.
  *
  * Zero dependencies (plain fetch, Node >= 18). Uses ONLY the public anon key plus
  * test-account passwords supplied through the environment — never the
@@ -102,26 +106,26 @@ const upload = (p, token, bytes, type) => call("POST", storagePath(p), { token, 
 // probe fixtures (explicit ids => the product_id_seq sequence is never touched)
 const CAT = randomUUID(), SUB = randomUUID();
 const OTHER_CAT = randomUUID(), OTHER_SUB = randomUUID(), SUB2 = randomUUID();
-const PID = "900000001", PID_BAD = "900000002";
+const PID = "900000001", PID_BAD = "900000002", PID2 = "900000003";
 const IMG = `products/${PID}/probe.png`;
 const BARCODE = "ZZ-SECURITY-PROBE-1";
-const PRIVATE_KEYS = /"(barcode|unit_stock|package_stock|unit_track_stock|package_track_stock|unit_available|package_available|is_visible|sort_order|created_at|updated_at|user_id)"\s*:/;
+const PRIVATE_KEYS = /"(barcode|stock_base_units|track_stock|unit_available|package_available|unit_in_stock|package_in_stock|is_visible|sort_order|created_at|updated_at|user_id)"\s*:/;
 
 let adminToken = "", userToken = "", userId = "";
-const created = { product: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
+const created = { product: false, product2: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
 
 async function cleanup() {
   section("Cleanup");
   const res = [];
   if (created.image) res.push(["storage object", (await call("DELETE", `${URL_}/storage/v1/object/product-images`, { token: adminToken, body: { prefixes: [IMG] } })).status < 300]);
-  res.push(["products", (await rest("DELETE", `products?id=in.(${PID},${PID_BAD})`, { token: adminToken })).status < 300]);
+  res.push(["products", (await rest("DELETE", `products?id=in.(${PID},${PID_BAD},${PID2})`, { token: adminToken })).status < 300]);
   res.push(["subcategories", (await rest("DELETE", `subcategories?id=in.(${SUB},${SUB2},${OTHER_SUB})`, { token: adminToken })).status < 300]);
   res.push(["categories", (await rest("DELETE", `categories?id=in.(${CAT},${OTHER_CAT})`, { token: adminToken })).status < 300]);
-  const left = await rest("GET", `products?id=in.(${PID},${PID_BAD})&select=id`, { token: adminToken });
+  const left = await rest("GET", `products?id=in.(${PID},${PID_BAD},${PID2})&select=id`, { token: adminToken });
   const leftCat = await rest("GET", `categories?slug=like.zz-security-probe*&select=id`, { token: adminToken });
   const clean = left.json?.length === 0 && leftCat.json?.length === 0;
   console.log(`  probe rows removed: ${clean ? "yes" : "NO — remove manually:"}`);
-  if (!clean) console.log("    delete from public.products where id in ('900000001','900000002');\n    delete from public.subcategories where slug like 'zz-security-probe%';\n    delete from public.categories where slug like 'zz-security-probe%';\n    (and delete the object products/900000001/probe.png from bucket product-images)");
+  if (!clean) console.log("    delete from public.products where id in ('900000001','900000002','900000003');\n    delete from public.subcategories where slug like 'zz-security-probe%';\n    delete from public.categories where slug like 'zz-security-probe%';\n    (and delete the object products/900000001/probe.png from bucket product-images)");
 }
 
 async function main() {
@@ -145,11 +149,11 @@ async function main() {
   created.sub = r.status === 201; check("admin can INSERT subcategory", r.status === 201, `HTTP ${r.status} ${r.text.slice(0, 120)}`);
   r = await rest("POST", "products", { token: adminToken, body: {
     id: PID, category_id: CAT, subcategory_id: SUB, name_he: "מוצר בדיקת אבטחה", brand: "ZZ", barcode: BARCODE,
-    unit_price: 10, unit_sale_enabled: true, unit_sale_price: 8, unit_track_stock: true, unit_stock: 7,
+    unit_price: 10, unit_sale_enabled: true, unit_sale_price: 8, track_stock: true, stock_base_units: 7,
     package_enabled: true, package_label: "מארז", package_unit_count: 6, package_price: 55, package_sale_enabled: true, package_sale_price: 50,
     is_visible: false } });
   created.product = r.status === 201; check("admin can INSERT product (unit sale + package + own sale)", r.status === 201, `HTTP ${r.status} ${r.text.slice(0, 160)}`);
-  check("admin can SELECT hidden product incl. barcode + stock", (await rest("GET", `products?id=eq.${PID}&select=barcode,unit_stock`, { token: adminToken })).json?.[0]?.barcode === BARCODE);
+  check("admin can SELECT hidden product incl. barcode + shared stock", (await rest("GET", `products?id=eq.${PID}&select=barcode,stock_base_units`, { token: adminToken })).json?.[0]?.barcode === BARCODE);
   check("admin sees own admin_users row (guard query works)", (await rest("GET", "admin_users?select=user_id", { token: adminToken })).json?.length === 1);
 
   // -------------------------------------------------------------------- 1. anon
@@ -224,7 +228,7 @@ async function main() {
   await bad("unit sale enabled without a sale price", { unit_sale_enabled: true }, "23514");
   await bad("unit sale price not lower than regular", { unit_sale_enabled: true, unit_sale_price: 10 }, "23514");
   await bad("negative unit price", { unit_price: -1 }, "23514");
-  await bad("negative stock", { unit_stock: -1 }, "23514");
+  await bad("negative stock", { stock_base_units: -1 }, "23514");
   await bad("package enabled without label", { package_enabled: true, package_unit_count: 10, package_price: 90 }, "23514");
   await bad("package enabled without unit count", { package_enabled: true, package_label: "פקט", package_price: 90 }, "23514");
   await bad("package enabled without price", { package_enabled: true, package_label: "פקט", package_unit_count: 10 }, "23514");
@@ -317,19 +321,83 @@ async function main() {
     }
   }
 
+  // ------------------------------------------- 3c. admin Products support (migration 0006)
+  const probe0006 = await rpc("admin_reorder_products", adminToken, { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [PID] });
+  if (probe0006.status === 404 || pgCode(probe0006) === "PGRST202") {
+    skipped.push("admin Products support (apply supabase/migrations/0006_admin_products.sql, then re-run)");
+    section("Admin Products support (0006)  --  SKIPPED: migration 0006 is not applied yet");
+  } else {
+    section("Admin Products support (migration 0006)");
+    check("admin can reorder a single-product group (fixture call above succeeded)", probe0006.status < 300, `HTTP ${probe0006.status} ${probe0006.text.slice(0, 100)}`);
+
+    r = await rpc("admin_reorder_products", ANON, { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [PID] });
+    check("anon cannot call admin_reorder_products()", isDenied(r) || r.status === 404, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    // a second probe product in the SAME (category, subcategory) group, to reorder against
+    r = await rest("POST", "products", { token: adminToken, body: { id: PID2, category_id: CAT, subcategory_id: SUB, name_he: "מוצר בדיקת אבטחה 2", unit_price: 5, is_visible: false, sort_order: 20 } });
+    created.product2 = r.status === 201; check("(fixture) second probe product created", r.status === 201, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    const productOrder = async () =>
+      (await rest("GET", `products?category_id=eq.${CAT}&subcategory_id=eq.${SUB}&select=id,sort_order&order=sort_order.asc`, { token: adminToken })).json?.map((row) => row.id);
+    check("probe order before: [PID, PID2]", JSON.stringify(await productOrder()) === JSON.stringify([PID, PID2]));
+
+    r = await rpc("admin_reorder_products", adminToken, { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [PID2, PID] });
+    check("admin can reorder products atomically", r.status < 300, `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+    check("...the new order is stored (10, 20)", JSON.stringify(await productOrder()) === JSON.stringify([PID2, PID]));
+    const prows = (await rest("GET", `products?category_id=eq.${CAT}&subcategory_id=eq.${SUB}&select=id,sort_order&order=sort_order.asc`, { token: adminToken })).json ?? [];
+    check("...as sort_order 10 and 20", prows.map((row) => row.sort_order).join() === "10,20");
+
+    for (const [name, args] of [
+      ["missing one", { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [PID2] }],
+      ["duplicate", { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [PID2, PID, PID] }],
+      ["empty list", { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [] }],
+      // a product that is not in THIS (category, subcategory) group at all — proves cross-group isolation
+      ["a product outside this group", { p_category_id: CAT, p_subcategory_id: OTHER_SUB, p_ids: [PID2, PID] }],
+    ]) {
+      r = await rpc("admin_reorder_products", adminToken, args);
+      check(`a bad product list is rejected: ${name}`, r.status >= 400, `HTTP ${r.status}`);
+    }
+    check("...and the order is unchanged after all rejected lists", JSON.stringify(await productOrder()) === JSON.stringify([PID2, PID]));
+
+    if (userToken) {
+      r = await rpc("admin_reorder_products", userToken, { p_category_id: CAT, p_subcategory_id: SUB, p_ids: [PID, PID2] });
+      check("a non-admin's product reorder is rejected", r.status >= 400, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      check("...and changed nothing", JSON.stringify(await productOrder()) === JSON.stringify([PID2, PID]));
+    }
+  }
+
   // -------------------------------------------------- 4. RPC shape when made public
   section("Public catalog output (probe made visible, then hidden again)");
   for (const [t, id] of [["categories", CAT], ["subcategories", SUB], ["products", PID]]) await rest("PATCH", `${t}?id=eq.${id}`, { token: adminToken, body: { is_visible: true } });
   const live = await rpc("get_storefront_catalog", ANON);
   const p = live.json?.products?.find((x) => x.id === PID);
   check("visible probe appears in the public catalog", !!p);
-  check("unit: price 10, sale 8 shown, in_stock true (7 tracked)", p?.unit?.price === 10 && p?.unit?.sale_price === 8 && p?.unit?.in_stock === true, JSON.stringify(p?.unit));
-  check("package: label מארז, count 6, price 55, sale 50", p?.package?.label === "מארז" && p?.package?.unit_count === 6 && p?.package?.price === 55 && p?.package?.sale_price === 50, JSON.stringify(p?.package));
+  check("unit: price 10, sale 8 shown, in_stock true (shared pool has 7, package needs 6)", p?.unit?.price === 10 && p?.unit?.sale_price === 8 && p?.unit?.in_stock === true, JSON.stringify(p?.unit));
+  check("package: label מארז, count 6, price 55, sale 50, in_stock true (7 >= 6)", p?.package?.label === "מארז" && p?.package?.unit_count === 6 && p?.package?.price === 55 && p?.package?.sale_price === 50 && p?.package?.in_stock === true, JSON.stringify(p?.package));
   check("public payload still leaks no private fields", !PRIVATE_KEYS.test(live.text) && !live.text.includes(BARCODE));
-  await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { unit_sale_enabled: false, package_sale_enabled: false, unit_stock: 0 } });
+
+  // shared inventory: draining the ONE pool below the package's unit count affects BOTH options together
+  await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { unit_sale_enabled: false, package_sale_enabled: false, stock_base_units: 3 } });
+  const low = (await rpc("get_storefront_catalog", ANON)).json?.products?.find((x) => x.id === PID);
+  check("sales disabled => sale_price hidden; 3 base units < package of 6 => unit still in stock, package NOT (shared pool, not independent counters)",
+    low?.unit?.sale_price === null && low?.package?.sale_price === null && low?.unit?.in_stock === true && low?.package?.in_stock === false, JSON.stringify(low));
+
+  await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { stock_base_units: 0 } });
   const off = (await rpc("get_storefront_catalog", ANON)).json?.products?.find((x) => x.id === PID);
-  check("sales disabled => sale_price hidden; stock 0 => in_stock false (unit) while package stays independent",
-    off?.unit?.sale_price === null && off?.package?.sale_price === null && off?.unit?.in_stock === false && off?.package?.in_stock === true, JSON.stringify(off));
+  check("0 base units => BOTH unit and package out of stock (the same shared count drives both)",
+    off?.unit?.in_stock === false && off?.package?.in_stock === false, JSON.stringify(off));
+
+  // manual "sell this option right now" switches stay independent of the stock count
+  await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { stock_base_units: 7, unit_available: false } });
+  const manualOff = (await rpc("get_storefront_catalog", ANON)).json?.products?.find((x) => x.id === PID);
+  check("manually disabling the UNIT (with plenty of stock) hides only the unit, package unaffected",
+    manualOff?.unit?.in_stock === false && manualOff?.package?.in_stock === true, JSON.stringify(manualOff));
+  await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { unit_available: true, package_available: false } });
+  const manualOff2 = (await rpc("get_storefront_catalog", ANON)).json?.products?.find((x) => x.id === PID);
+  check("manually disabling the PACKAGE (with plenty of stock) hides only the package, unit unaffected",
+    manualOff2?.unit?.in_stock === true && manualOff2?.package?.in_stock === false, JSON.stringify(manualOff2));
+  await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { package_available: true } });
+
   for (const [t, id] of [["products", PID], ["subcategories", SUB], ["categories", CAT]]) await rest("PATCH", `${t}?id=eq.${id}`, { token: adminToken, body: { is_visible: false } });
   check("hidden again => gone from public catalog", !(await rpc("get_storefront_catalog", ANON)).text.includes(PID));
 
@@ -347,6 +415,53 @@ async function main() {
   check("bucket rejects non-image file types", r.status >= 400, `HTTP ${r.status}`);
   r = await upload(`products/${PID}/big.png`, adminToken, Buffer.alloc(2 * 1024 * 1024 + 1024, 1), "image/png");
   check("bucket rejects files over 2 MB", r.status >= 400, `HTTP ${r.status}`);
+
+  // ------------------------------------------------- 5b. cart stock availability check (migration 0007)
+  const probe0007 = await rpc("check_stock_availability", ANON, { p_items: [] });
+  if (probe0007.status === 404 || pgCode(probe0007) === "PGRST202") {
+    skipped.push("cart stock availability check (apply supabase/migrations/0007_stock_availability.sql, then re-run)");
+    section("Cart stock availability check (0007)  --  SKIPPED: migration 0007 is not applied yet");
+  } else {
+    section("Cart stock availability check (migration 0007)");
+    check("empty request => empty result", probe0007.status === 200 && JSON.stringify(probe0007.json) === "[]", `HTTP ${probe0007.status} ${probe0007.text.slice(0, 100)}`);
+
+    // section 4 left the probe product AND its category AND its subcategory all hidden. Visibility is a chain
+    // (product AND category AND subcategory must all be visible — see get_storefront_catalog()'s own rule),
+    // so each level is exercised on its own rather than flipping all three at once.
+    r = await rpc("check_stock_availability", ANON, { p_items: [{ product_id: PID, base_units: 1 }] });
+    check("product + category + subcategory all hidden => NOT available", r.json?.[0]?.available === false, JSON.stringify(r.json));
+
+    await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: true } });
+    await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { is_visible: true } });
+    r = await rpc("check_stock_availability", ANON, { p_items: [{ product_id: PID, base_units: 1 }] });
+    check("category + subcategory now visible, but the PRODUCT itself still hidden => still NOT available (existence never revealed)", r.json?.[0]?.available === false, JSON.stringify(r.json));
+
+    await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { is_visible: true } }); // now everything in the chain is visible
+    r = await rpc("check_stock_availability", ANON, { p_items: [{ product_id: PID, base_units: 7 }] });
+    check("everything visible, shared stock is 7: requesting exactly 7 => available", r.json?.[0]?.available === true, JSON.stringify(r.json));
+    r = await rpc("check_stock_availability", ANON, { p_items: [{ product_id: PID, base_units: 8 }] });
+    check("requesting 8 (one over) => NOT available", r.json?.[0]?.available === false, JSON.stringify(r.json));
+
+    await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: false } });
+    r = await rpc("check_stock_availability", ANON, { p_items: [{ product_id: PID, base_units: 1 }] });
+    check("product itself visible, but its CATEGORY hidden => NOT available", r.json?.[0]?.available === false, JSON.stringify(r.json));
+    await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: true } }); // restore for the checks below
+
+    r = await rpc("check_stock_availability", ANON, { p_items: [{ product_id: PID, base_units: 3 }, { product_id: "does-not-exist", base_units: 1 }] });
+    check("batched: independent results per product, unknown id => NOT available",
+      r.json?.[0]?.product_id === PID && r.json?.[0]?.available === true && r.json?.[1]?.available === false, JSON.stringify(r.json));
+
+    check("response never leaks the raw stock count or track_stock", !PRIVATE_KEYS.test(r.text));
+    check("response has only product_id/available keys per item", Object.keys(r.json?.[0] ?? {}).sort().join(",") === "available,product_id");
+
+    r = await rpc("check_stock_availability", userToken || ANON, { p_items: [{ product_id: PID, base_units: 1 }] });
+    check("a logged-in non-admin gets the same public answer as anon (nothing extra)", r.status === 200 && typeof r.json?.[0]?.available === "boolean");
+
+    // restore exactly as section 4 left it: product, subcategory and category all hidden
+    await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { is_visible: false } });
+    await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { is_visible: false } });
+    await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: false } });
+  }
 
   // ------------------------------------------------------------------- 6. sign-ups
   if (CHECK_SIGNUP) {

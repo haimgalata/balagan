@@ -111,7 +111,6 @@ export async function stubSupabase(page: Page, options: StubOptions = {}) {
     const request = route.request();
     const url = new URL(request.url());
     if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: CORS });
-    if (/\/(storage|realtime)\//.test(url.pathname)) return route.fulfill({ status: 404, headers: CORS, body: "" });
 
     const sub = subOf(request.headers()["authorization"]);
     calls.push({ method: request.method(), path: url.pathname, sub });

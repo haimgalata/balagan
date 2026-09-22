@@ -42,7 +42,7 @@ export function CartDrawer() {
         <div className="flex h-full flex-col">
           <ul className="flex-1 overflow-y-auto px-4 py-4">
             {lines.map((line) => {
-              const { product, option, quantity, label, pricing, available } = line;
+              const { product, option, quantity, label, pricing, available, overLimit } = line;
               const optionText =
                 option === "package" && product.package ? `${label} (${product.package.unitCount} יח׳)` : label;
 
@@ -95,14 +95,17 @@ export function CartDrawer() {
                         </div>
                       )}
                       {!available && <p className="text-brand-danger">אזל — לא נכלל בסכום</p>}
+                      {available && overLimit && (
+                        <p className="text-brand-danger">הכמות שבסל אינה זמינה יותר במלאי — אפשר להקטין אותה</p>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 rounded-md border border-brand-border">
                         <button
                           type="button"
-                          onClick={() => increment(product.id, option)}
-                          disabled={!available}
+                          onClick={() => void increment(product.id, option)}
+                          disabled={!available || overLimit}
                           aria-label={`הוסף ${label}`}
                           className="rounded p-2.5 text-brand-text outline-none transition-colors hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:opacity-40 sm:p-1.5"
                         >

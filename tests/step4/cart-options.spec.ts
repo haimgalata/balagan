@@ -10,7 +10,7 @@ test.describe("the customer explicitly chooses unit or package", () => {
     await gotoReady(page);
     const c = card(page, "מרלבורו אדום");
     for (let i = 0; i < 10; i++) await c.getByRole("button", { name: "יחידה", exact: true }).click();
-    expect(await cartBadge(page)).toBe("10");
+    await expect.poll(() => cartBadge(page)).toBe("10"); // addItem confirms availability asynchronously — wait for it to settle
     const drawer = await openCart(page);
     const rows = await rowTexts(drawer);
     expect(rows).toHaveLength(1); // one unit line — no package line appeared
@@ -22,7 +22,7 @@ test.describe("the customer explicitly chooses unit or package", () => {
   test("choosing the package gives the package price and its own line", async ({ page }) => {
     await gotoReady(page);
     await card(page, "מרלבורו אדום").getByRole("button", { name: "פקט", exact: true }).click();
-    expect(await cartBadge(page)).toBe("1"); // one package = 1 purchase item
+    await expect.poll(() => cartBadge(page)).toBe("1"); // one package = 1 purchase item; addItem confirms availability asynchronously
     const drawer = await openCart(page);
     const rows = await rowTexts(drawer);
     expect(rows).toHaveLength(1);
@@ -38,7 +38,7 @@ test.describe("the customer explicitly chooses unit or package", () => {
     await c.getByRole("button", { name: "יחידה", exact: true }).click();
     await c.getByRole("button", { name: "יחידה", exact: true }).click();
     await c.getByRole("button", { name: "פקט", exact: true }).click();
-    expect(await cartBadge(page)).toBe("3");
+    await expect.poll(() => cartBadge(page)).toBe("3"); // addItem confirms availability asynchronously — wait for it to settle
     await expect(page.getByText("3 פריטים בסל")).toBeVisible(); // bottom bar uses the same count
     const drawer = await openCart(page);
     const rows = await rowTexts(drawer);
@@ -56,7 +56,7 @@ test.describe("the customer explicitly chooses unit or package", () => {
     const drawer = await openCart(page);
 
     await drawer.getByRole("button", { name: "הוסף פקט" }).click();
-    expect(await cartBadge(page)).toBe("3"); // 1 unit + 2 packages
+    await expect.poll(() => cartBadge(page)).toBe("3"); // 1 unit + 2 packages; addItem confirms availability asynchronously
     const rows = await rowTexts(drawer);
     expect(rows[0]).toContain("1 × יחידה");
     expect(rows[1]).toContain("2 × פקט");
@@ -78,6 +78,8 @@ test.describe("the customer explicitly chooses unit or package", () => {
     await c.getByRole("button", { name: "יחידה", exact: true }).click();
     await c.getByRole("button", { name: "יחידה", exact: true }).click();
     await c.getByRole("button", { name: "פקט", exact: true }).click();
+    // addItem confirms availability asynchronously before writing to storage — wait for it to settle
+    await expect.poll(() => cartBadge(page)).toBe("3");
     expect(JSON.parse((await readLocalStorage(page, V2_CART_KEY))!)).toEqual([
       { productId: "1", option: "unit", quantity: 2 },
       { productId: "1", option: "package", quantity: 1 },
@@ -154,7 +156,7 @@ test.describe("per-option sales, labels and availability (custom catalog data)",
 
     await c.getByRole("button", { name: "יחידה", exact: true }).click();
     await c.getByRole("button", { name: "מארז", exact: true }).click();
-    expect(await cartBadge(page)).toBe("2");
+    await expect.poll(() => cartBadge(page)).toBe("2"); // addItem confirms availability asynchronously — wait for it to settle
     const drawer = await openCart(page);
     const rows = await rowTexts(drawer);
     expect(rows[0]).toContain("1 × יחידה (₪51 ₪45)");
@@ -173,7 +175,7 @@ test.describe("per-option sales, labels and availability (custom catalog data)",
     await expect(c.getByRole("button", { name: "יחידה", exact: true })).toBeEnabled();
     await expect(c).not.toContainText("פקט");
     await c.getByRole("button", { name: "יחידה", exact: true }).click();
-    expect(await cartBadge(page)).toBe("1");
+    await expect.poll(() => cartBadge(page)).toBe("1"); // addItem confirms availability asynchronously — wait for it to settle
   });
 
   test("availability is per option; the אזל badge appears only when neither can be bought", async ({ page }) => {

@@ -2,7 +2,9 @@ import { test, expect } from "@playwright/test";
 import {
   UNIT_LABEL,
   formatPrice,
+  getLineBaseUnits,
   getLineTotalCents,
+  getOptionBaseUnits,
   getOptionLabel,
   getOptionPricing,
   getSavingsCents,
@@ -125,5 +127,32 @@ test.describe("explicit choice: units never turn into a package", () => {
     const p = product();
     expect(getSavingsCents(getOptionPricing(p, "package")!, 2)).toBe(2000); // 2 x (510 - 500)
     expect(getSavingsCents(getOptionPricing(p, "unit")!, 10)).toBe(0);
+  });
+});
+
+// added for the cart shared-stock quantity check (src/lib/stockApi.ts, src/context/CartContext.tsx) — a unit
+// and a package draw from the SAME base-unit pool, so quantities must convert to this common unit first.
+test.describe("getOptionBaseUnits / getLineBaseUnits", () => {
+  test("a unit is always 1 base unit; a package is its unit count", () => {
+    const p = product();
+    expect(getOptionBaseUnits(p, "unit")).toBe(1);
+    expect(getOptionBaseUnits(p, "package")).toBe(10);
+  });
+
+  test("a package option on a product with no package is 0 base units, never silently 1", () => {
+    expect(getOptionBaseUnits(product({ package: null }), "package")).toBe(0);
+  });
+
+  test("line totals scale with quantity", () => {
+    const p = product();
+    expect(getLineBaseUnits(p, "unit", 7)).toBe(7);
+    expect(getLineBaseUnits(p, "package", 2)).toBe(20); // 2 packages of 10 = 20 base units
+  });
+
+  test("your example: 1 package (10) + 2 units (2) = 12; the same 12 as 12 loose units", () => {
+    const p = product();
+    const total = getLineBaseUnits(p, "package", 1) + getLineBaseUnits(p, "unit", 2);
+    expect(total).toBe(12);
+    expect(total).toBe(getLineBaseUnits(p, "unit", 12));
   });
 });

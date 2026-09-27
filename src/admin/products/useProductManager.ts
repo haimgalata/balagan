@@ -61,9 +61,14 @@ export function useProductManager(client: SupabaseClient) {
     setPage(0);
   }, []);
 
-  /** Runs one mutation; resolves to its error (so a form can show it) or null on success. */
+  /**
+   * Runs one mutation; resolves to its error (so a form can show it) or null on success. `successMessage` can
+   * be a plain string, or a function of the action's own success data — needed when a single mutation can
+   * still count as an overall success while something secondary about it went wrong (e.g. product creation
+   * succeeding even though the image attached to it failed to upload).
+   */
   const run = useCallback(
-    async (action: () => Promise<ApiResult<unknown>>, successMessage: string): Promise<AdminError | null> => {
+    async (action: () => Promise<ApiResult<unknown>>, successMessage: string | ((data: unknown) => string)): Promise<AdminError | null> => {
       setBusy(true);
       setFeedback(null);
       const result = await action();
@@ -71,7 +76,7 @@ export function useProductManager(client: SupabaseClient) {
       if (!alive.current) return null;
       setBusy(false);
       if (result.ok) {
-        setFeedback({ kind: "success", message: successMessage });
+        setFeedback({ kind: "success", message: typeof successMessage === "function" ? successMessage(result.data) : successMessage });
         return null;
       }
       setFeedback({ kind: "error", message: result.error.message });

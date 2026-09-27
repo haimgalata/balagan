@@ -1,9 +1,10 @@
-import { useBusinessStatus } from "@/hooks/useBusinessStatus";
-import { DELIVERY_FEE, MINIMUM_ORDER } from "@/data/deliveryInfo";
+import { useOrderStatus } from "@/hooks/useOrderStatus";
+import { formatPrice } from "@/lib/pricing";
 
 /**
- * Thin strip rendered right after `Hero`: live open/closed status + today's
- * hours + minimum order + delivery fee.
+ * Thin strip rendered right after `Hero`: whether the site is taking ONLINE ORDERS right now (a separate
+ * concept from the physical store's own hours — see `Hero.tsx`'s pill for that) + today's order hours +
+ * minimum order + delivery fee, all from `useOrderStatus` (BusinessSettingsContext).
  *
  * `sticky top-0` — it sits in normal document flow immediately after the
  * hero, then sticks flush to the very top of the viewport once scrolled up
@@ -19,7 +20,7 @@ import { DELIVERY_FEE, MINIMUM_ORDER } from "@/data/deliveryInfo";
  * changes.
  */
 export function BusinessInfoBar() {
-  const { isOpen, hoursLabel } = useBusinessStatus();
+  const { isOpen, hoursLabel, minOrderCents, deliveryFeeCents } = useOrderStatus();
 
   return (
     <div className="sticky top-0 z-30 border-b border-brand-border bg-brand-bg-elevated">
@@ -32,7 +33,7 @@ export function BusinessInfoBar() {
             aria-hidden="true"
           />
           <span className={isOpen ? "text-brand-success" : "text-brand-danger"}>
-            {isOpen ? "פתוח עכשיו" : "סגור כעת"}
+            {isOpen ? "הזמנות פתוחות" : "הזמנות סגורות"}
           </span>
         </span>
 
@@ -54,8 +55,8 @@ export function BusinessInfoBar() {
           />
 
           <span>
-            <span className="sm:hidden">מינימום ₪{MINIMUM_ORDER}</span>
-            <span className="hidden sm:inline">מינימום הזמנה ₪{MINIMUM_ORDER}</span>
+            <span className="sm:hidden">מינימום ₪{formatPrice(minOrderCents)}</span>
+            <span className="hidden sm:inline">מינימום הזמנה ₪{formatPrice(minOrderCents)}</span>
           </span>
         </span>
 
@@ -65,7 +66,7 @@ export function BusinessInfoBar() {
             aria-hidden="true"
           />
 
-          <span>משלוח ₪{DELIVERY_FEE}</span>
+          <span>משלוח ₪{formatPrice(deliveryFeeCents)}</span>
         </span>
       </div>
     </div>

@@ -40,22 +40,28 @@ export function ImageUploader({ client, productId, imagePath, disabled, onSaved 
       return;
     }
     setBusy(true);
-    const uploaded = await uploadProductImage(client, productId, file);
-    if (!uploaded.ok) {
+    try {
+      const uploaded = await uploadProductImage(client, productId, file);
+      if (!uploaded.ok) {
+        setError(uploaded.error.message);
+        return;
+      }
+      const previousPath = currentPath;
+      const saveError = await onSaved(uploaded.data);
+      if (saveError) {
+        setError(saveError.message);
+        void removeProductImage(client, uploaded.data); // the row was not updated — don't leave the upload orphaned
+        return;
+      }
+      setCurrentPath(uploaded.data);
+      if (previousPath) void removeProductImage(client, previousPath); // replaced — the old object is no longer referenced
+    } catch (err) {
+      // A thrown error here previously escaped as an unhandled rejection (busy stuck true forever, no
+      // message) instead of a normal ApiResult error — always surface something rather than hang silently.
+      setError(`העלאת התמונה נכשלה באופן לא צפוי: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
       setBusy(false);
-      setError(uploaded.error.message);
-      return;
     }
-    const previousPath = currentPath;
-    const saveError = await onSaved(uploaded.data);
-    setBusy(false);
-    if (saveError) {
-      setError(saveError.message);
-      void removeProductImage(client, uploaded.data); // the row was not updated — don't leave the upload orphaned
-      return;
-    }
-    setCurrentPath(uploaded.data);
-    if (previousPath) void removeProductImage(client, previousPath); // replaced — the old object is no longer referenced
   };
 
   const remove = async () => {

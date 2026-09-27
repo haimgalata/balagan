@@ -3,7 +3,7 @@ import { Minus, Plus, ShoppingCart, Trash2 } from "lucide-react";
 import { useCart } from "@/context/CartContext";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
-import { DELIVERY_FEE, MINIMUM_ORDER } from "@/data/deliveryInfo";
+import { useBusinessSettings } from "@/context/BusinessSettingsContext";
 import { formatPrice } from "@/lib/pricing";
 
 const CHECKOUT_MESSAGE_MS = 4000;
@@ -21,6 +21,7 @@ const CHECKOUT_MESSAGE_MS = 4000;
  */
 export function CartDrawer() {
   const { lines, totalPriceCents, isOpen, closeCart, increment, decrement, removeLine } = useCart();
+  const { settings } = useBusinessSettings();
   const [showCheckoutMessage, setShowCheckoutMessage] = useState(false);
 
   const handleCheckoutClick = () => {
@@ -135,7 +136,7 @@ export function CartDrawer() {
 
           <div className="border-t border-brand-border px-4 py-4">
             <p className="mb-3 text-center text-xs text-brand-text-muted">
-              משלוח ₪{DELIVERY_FEE} · מינימום הזמנה ₪{MINIMUM_ORDER}
+              משלוח ₪{formatPrice(settings.delivery_fee_cents)} · מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}
             </p>
 
             <div className="mb-4 flex items-center justify-between text-lg">

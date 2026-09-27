@@ -12,10 +12,11 @@
  * Also covers the admin "Categories" support added by migration 0005 (the reorder / product-count
  * functions, the slug lock), the admin "Products" support added by migration 0006 (shared inventory —
  * one stock_base_units count plus independent unit_available/package_available switches — and the
- * per-(category,subcategory) product reorder function), and the cart's shared-stock quantity check added by
+ * per-(category,subcategory) product reorder function), the cart's shared-stock quantity check added by
  * migration 0007 (check_stock_availability — never leaks the raw stock count, hidden products, or whether a
- * product exists). If a migration has not been applied yet, its section reports a SKIP (exit code 2) instead
- * of failing.
+ * product exists), and the Business Settings support added by migration 0008 (get_business_settings() —
+ * physical-store hours, online-order hours, min order, delivery fee, manual pause). If a migration has not
+ * been applied yet, its section reports a SKIP (exit code 2) instead of failing.
  *
  * Zero dependencies (plain fetch, Node >= 18). Uses ONLY the public anon key plus
  * test-account passwords supplied through the environment — never the
@@ -461,6 +462,75 @@ async function main() {
     await rest("PATCH", `products?id=eq.${PID}`, { token: adminToken, body: { is_visible: false } });
     await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { is_visible: false } });
     await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: false } });
+  }
+
+  // ------------------------------------------------- 5c. business settings (migration 0008)
+  const probe0008 = await rpc("get_business_settings", ANON);
+  if (probe0008.status === 404 || pgCode(probe0008) === "PGRST202") {
+    skipped.push("business settings (apply supabase/migrations/0008_business_settings.sql, then re-run)");
+    section("Business Settings (0008)  --  SKIPPED: migration 0008 is not applied yet");
+  } else {
+    section("Business Settings (migration 0008)");
+    check("anon CAN call get_business_settings()", probe0008.status === 200 && Array.isArray(probe0008.json?.store_hours) && Array.isArray(probe0008.json?.order_hours), `HTTP ${probe0008.status}`);
+    check("store_hours and order_hours each have all 7 days", probe0008.json?.store_hours?.length === 7 && probe0008.json?.order_hours?.length === 7);
+    check("min_order_cents/delivery_fee_cents are numbers, orders_paused is boolean",
+      typeof probe0008.json?.min_order_cents === "number" && typeof probe0008.json?.delivery_fee_cents === "number" && typeof probe0008.json?.orders_paused === "boolean");
+    check("no extra/private fields leak (e.g. updated_at)", !/"updated_at"\s*:/.test(probe0008.text));
+
+    for (const t of ["business_hours", "business_settings"]) {
+      r = await rest("GET", `${t}?select=*&limit=1`);
+      check(`anon cannot SELECT ${t} directly`, isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+    r = await rest("PATCH", "business_settings?id=eq.1", { body: { orders_paused: true } });
+    check("anon cannot UPDATE business_settings", isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    r = await rest("PATCH", "business_hours?schedule_type=eq.store&day_of_week=eq.0", { body: { is_open: false } });
+    check("anon cannot UPDATE business_hours", isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    if (userToken) {
+      r = await rest("GET", "business_settings?select=*", { token: userToken });
+      check("non-admin sees 0 rows of business_settings", deniedOrEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rest("PATCH", "business_settings?id=eq.1", { token: userToken, body: { orders_paused: true } });
+      check("non-admin cannot UPDATE business_settings", deniedOrEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+
+    // admin: this table is REAL singleton config, not a throwaway probe row — save the original values and
+    // restore them exactly afterward (a local try/finally, same spirit as section 5's visibility restores).
+    const origSettings = (await rest("GET", "business_settings?select=min_order_cents,delivery_fee_cents,orders_paused", { token: adminToken })).json?.[0];
+    const origStoreSunday = (await rest("GET", "business_hours?schedule_type=eq.store&day_of_week=eq.0&select=is_open,open_time,close_time", { token: adminToken })).json?.[0];
+    check("(fixture) admin can read the real business_settings/business_hours rows", !!origSettings && !!origStoreSunday, JSON.stringify({ origSettings, origStoreSunday }));
+    try {
+      r = await rest("PATCH", "business_settings?id=eq.1", { token: adminToken, body: { orders_paused: true, min_order_cents: 6000 } });
+      check("admin can UPDATE business_settings", r.status === 200, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      const afterPause = await rpc("get_business_settings", ANON);
+      check("the manual pause + min order are reflected in the public RPC immediately", afterPause.json?.orders_paused === true && afterPause.json?.min_order_cents === 6000, JSON.stringify(afterPause.json));
+
+      r = await rest("PATCH", "business_hours?schedule_type=eq.store&day_of_week=eq.0", { token: adminToken, body: { is_open: false, open_time: null, close_time: null } });
+      check("admin can UPDATE business_hours (close a day)", r.status === 200, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      const afterClosed = await rpc("get_business_settings", ANON);
+      check("the closed day is reflected in the public RPC", afterClosed.json?.store_hours?.find((d) => d.day_of_week === 0)?.is_open === false, JSON.stringify(afterClosed.json?.store_hours));
+
+      r = await rest("PATCH", "business_hours?schedule_type=eq.store&day_of_week=eq.0", { token: adminToken, body: { is_open: true, open_time: "09:00", close_time: "10:00" } });
+      check("admin can re-open a day with valid hours", r.status === 200, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+      r = await rest("PATCH", "business_hours?schedule_type=eq.store&day_of_week=eq.0", { token: adminToken, body: { is_open: true, open_time: null, close_time: null } });
+      check("marking a day open with no times is rejected (check constraint)", r.status >= 400, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rest("PATCH", "business_settings?id=eq.1", { token: adminToken, body: { min_order_cents: -1 } });
+      check("negative min_order_cents is rejected (check constraint)", r.status >= 400, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rest("POST", "business_settings", { token: adminToken, body: { id: 2 } });
+      check("a second business_settings row is rejected — singleton", r.status >= 400, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+      if (userToken) {
+        r = await rpc("get_business_settings", userToken);
+        check("a logged-in non-admin gets the same public answer as anon (nothing extra)", r.status === 200 && typeof r.json?.orders_paused === "boolean");
+      }
+    } finally {
+      // restore exactly as it was before this section touched the real config
+      if (origSettings) await rest("PATCH", "business_settings?id=eq.1", { token: adminToken, body: origSettings });
+      if (origStoreSunday) await rest("PATCH", "business_hours?schedule_type=eq.store&day_of_week=eq.0", { token: adminToken, body: origStoreSunday });
+      const restored = await rpc("get_business_settings", ANON);
+      check("business settings restored to their original values after the probe",
+        restored.json?.min_order_cents === origSettings?.min_order_cents && restored.json?.orders_paused === origSettings?.orders_paused, JSON.stringify(restored.json));
+    }
   }
 
   // ------------------------------------------------------------------- 6. sign-ups

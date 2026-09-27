@@ -10,7 +10,9 @@ import {
   deleteProduct,
   nextSortOrderInGroup,
   productImageUrl,
+  removeProductImage,
   updateProduct,
+  uploadProductImage,
   type ProductRow,
   type ProductWriteFields,
 } from "@/admin/products/productsApi";
@@ -67,10 +69,31 @@ export function ProductsListTab({ client, categories, subcategories }: ProductsL
   const subcategoryOf = (id: string | null) => (id ? subcategories.find((s) => s.id === id)?.name_he ?? "?" : "—");
 
   const closeForm = () => setForm(null);
-  const submitCreate = async (values: ProductWriteFields): Promise<AdminError | null> => {
+  const submitCreate = async (values: ProductWriteFields, imageFile: File | null): Promise<AdminError | null> => {
     const sortResult = await nextSortOrderInGroup(client, values.category_id, values.subcategory_id);
     if (!sortResult.ok) return sortResult.error;
-    const error = await run(() => createProduct(client, { ...values, sort_order: sortResult.data }), `המוצר "${values.name_he}" נוסף`);
+    const error = await run(
+      async () => {
+        const created = await createProduct(client, { ...values, sort_order: sortResult.data });
+        if (!created.ok) return created;
+        if (!imageFile) return { ok: true as const, data: { imageWarning: null as string | null } };
+        // The product now exists; upload the staged file the same way the edit-flow ImageUploader does. A
+        // failure here does NOT roll back the product (a photo is always optional) — just surface a warning
+        // so the admin knows to retry it from Edit.
+        const uploaded = await uploadProductImage(client, created.data.id, imageFile);
+        if (!uploaded.ok) return { ok: true as const, data: { imageWarning: `העלאת התמונה נכשלה (${uploaded.error.message}). ניתן להוסיף תמונה בעריכת המוצר.` } };
+        const saved = await updateProduct(client, created.data.id, { image_path: uploaded.data });
+        if (!saved.ok) {
+          void removeProductImage(client, uploaded.data); // the row was never updated — don't leave the upload orphaned
+          return { ok: true as const, data: { imageWarning: `התמונה הועלתה אך שמירתה נכשלה (${saved.error.message}). ניתן להוסיף תמונה בעריכת המוצר.` } };
+        }
+        return { ok: true as const, data: { imageWarning: null as string | null } };
+      },
+      (data) => {
+        const { imageWarning } = data as { imageWarning: string | null };
+        return imageWarning ? `המוצר "${values.name_he}" נוסף. ${imageWarning}` : `המוצר "${values.name_he}" נוסף`;
+      }
+    );
     if (!error) closeForm();
     return error;
   };
@@ -312,7 +335,7 @@ export function ProductsListTab({ client, categories, subcategories }: ProductsL
         subcategories={subcategories}
         initial={form?.mode === "edit" ? form.row : undefined}
         presetCategoryId={filters.categoryId ?? undefined}
-        onSubmit={(values) => (form?.mode === "edit" ? submitEdit(form.row.id, values) : submitCreate(values))}
+        onSubmit={(values, imageFile) => (form?.mode === "edit" ? submitEdit(form.row.id, values) : submitCreate(values, imageFile ?? null))}
         onSaveImage={form?.mode === "edit" ? (path) => run(() => updateProduct(client, form.row.id, { image_path: path }), path ? "התמונה עודכנה" : "התמונה הוסרה") : undefined}
       />
     </div>

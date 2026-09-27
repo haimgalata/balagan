@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
 import type { CategoryRow, SubcategoryRow } from "@/admin/categories/categoriesApi";
 import { ImageUploader } from "@/admin/products/ImageUploader";
+import { ProductImagePicker } from "@/admin/products/ProductImagePicker";
 import type { ProductRow, ProductWriteFields } from "@/admin/products/productsApi";
 import type { AdminError } from "@/admin/products/productErrors";
 import { approxPricePerUnit, validateProduct, type ProductDraft, type ProductField } from "@/admin/products/productValidation";
@@ -19,8 +20,12 @@ interface ProductFormDrawerProps {
   initial?: ProductRow;
   /** create: a category to preselect (e.g. opened from that category's filter). */
   presetCategoryId?: string;
-  /** Saves the non-image fields; resolves to the error to show, or null on success (the parent then closes the panel). */
-  onSubmit: (values: ProductWriteFields) => Promise<AdminError | null>;
+  /**
+   * Saves the non-image fields; resolves to the error to show, or null on success (the parent then closes the
+   * panel). In create mode, `imageFile` is whatever was staged in `ProductImagePicker` (or null) — the product
+   * doesn't have an id yet, so the caller uploads it right after creating the row.
+   */
+  onSubmit: (values: ProductWriteFields, imageFile?: File | null) => Promise<AdminError | null>;
   /** edit only: persists a new/removed image path immediately (see ImageUploader — independent of the rest of the form). */
   onSaveImage?: (path: string | null) => Promise<AdminError | null>;
 }
@@ -85,6 +90,7 @@ function ProductForm({
   const [trackStock, setTrackStock] = useState(initial?.track_stock ?? false);
   const [stockBaseUnits, setStockBaseUnits] = useState(initial ? String(initial.stock_base_units) : "0");
   const [isVisible, setIsVisible] = useState(initial?.is_visible ?? true);
+  const [stagedImageFile, setStagedImageFile] = useState<File | null>(null);
 
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -138,7 +144,7 @@ function ProductForm({
       stock_base_units: trackStock ? Number(stockBaseUnits) : 0,
       is_visible: isVisible,
     };
-    const error = await onSubmit(values);
+    const error = await onSubmit(values, mode === "create" ? stagedImageFile : undefined);
     if (error) {
       setGeneralError(error.message);
       setBusy(false);
@@ -151,7 +157,7 @@ function ProductForm({
 
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5 p-4">
-      {mode === "edit" && initial && (
+      {mode === "edit" && initial ? (
         <ImageUploader
           client={client}
           productId={initial.id}
@@ -159,6 +165,8 @@ function ProductForm({
           disabled={busy}
           onSaved={(path) => (onSaveImage ? onSaveImage(path) : Promise.resolve(null))}
         />
+      ) : (
+        <ProductImagePicker disabled={busy} onChange={setStagedImageFile} />
       )}
 
       <Field id="p-name-he" label="שם בעברית" error={showError("name_he")}>

@@ -5,21 +5,24 @@ import { CartDrawer } from "@/components/CartDrawer";
 import { CartSummaryBar } from "@/components/CartSummaryBar";
 import { Toast } from "@/components/Toast";
 import { CatalogProvider } from "@/context/CatalogContext";
+import { BusinessSettingsProvider } from "@/context/BusinessSettingsContext";
 import { CartProvider } from "@/context/CartContext";
 import { HomePage } from "@/pages/HomePage";
 
 function App() {
   return (
     <CatalogProvider>
-      <CartProvider>
-        <AgeGate />
-        <Header />
-        <HomePage />
-        <Footer />
-        <CartSummaryBar />
-        <CartDrawer />
-        <Toast />
-      </CartProvider>
+      <BusinessSettingsProvider>
+        <CartProvider>
+          <AgeGate />
+          <Header />
+          <HomePage />
+          <Footer />
+          <CartSummaryBar />
+          <CartDrawer />
+          <Toast />
+        </CartProvider>
+      </BusinessSettingsProvider>
     </CatalogProvider>
   );
 }

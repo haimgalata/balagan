@@ -149,8 +149,16 @@ export interface ProductWriteFields {
   is_visible: boolean;
 }
 
-export const createProduct = (client: SupabaseClient, input: ProductWriteFields & { sort_order: number }) =>
-  write(() => client.from("products").insert(input));
+/** Returns the new row's id — needed so a staged image (picked before the product existed) can be uploaded right after. */
+export async function createProduct(client: SupabaseClient, input: ProductWriteFields & { sort_order: number }): Promise<ApiResult<{ id: string }>> {
+  try {
+    const { data, error } = await client.from("products").insert(input).select("id").single();
+    if (error) return fail(error);
+    return { ok: true, data: data as { id: string } };
+  } catch (e) {
+    return unexpected(e);
+  }
+}
 
 // image_path is deliberately outside ProductWriteFields (the form never sets it — see ImageUploader), but an
 // update DOES need to write it, right after a successful storage upload/removal.
@@ -178,12 +186,22 @@ export function validateImageFile(file: File): AdminError | null {
   return null;
 }
 
+/**
+ * A per-upload unique id for the storage filename — doesn't need to be cryptographically random, just
+ * distinct. `crypto.randomUUID()` is restricted to secure contexts (https:/localhost), which made this throw
+ * (as an unhandled rejection, since it ran before any try/catch) when an admin opened the dev server from a
+ * phone over the LAN by plain-HTTP IP address; this has no such restriction.
+ */
+function uniqueImageId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /** Uploads a new object under this product's folder and returns its path (does NOT touch products.image_path — the caller saves that separately). */
 export async function uploadProductImage(client: SupabaseClient, productId: string, file: File): Promise<ApiResult<string>> {
   const invalid = validateImageFile(file);
   if (invalid) return { ok: false, error: invalid };
   const ext = IMAGE_EXTENSION[file.type];
-  const path = `products/${productId}/${crypto.randomUUID()}.${ext}`;
+  const path = `products/${productId}/${uniqueImageId()}.${ext}`;
   try {
     const { error } = await client.storage.from("product-images").upload(path, file, { contentType: file.type, upsert: false });
     if (error) return { ok: false, error: { kind: "invalid-image", message: `העלאת התמונה נכשלה: ${error.message}` } };

@@ -15,9 +15,13 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
  * Customer entry chunk baseline, gzipped. 64,558 bytes before the admin existed (Step 4); unchanged through
  * Steps 5-7 (all admin-only growth stayed in the separate lazy chunk). 66,182 bytes after adding the cart's
  * shared-stock quantity check (src/lib/stockApi.ts + the CartContext changes it needed) — the first deliberate
- * customer-facing growth since Step 4. Allowed growth from here: 1.2 KB, for incidental future changes.
+ * customer-facing growth since Step 4. 67,426 bytes after Business Settings: the old static
+ * businessHours.ts/deliveryInfo.ts + useBusinessStatus.ts were replaced by DB-backed
+ * BusinessSettingsContext/businessSettingsApi.ts/scheduleStatus.ts + useStoreStatus/useOrderStatus (Hero,
+ * BusinessInfoBar and CartDrawer now read from it) — every visitor needs this, so it stays in the customer
+ * bundle, not the admin-only chunk. Allowed growth from here: 1.2 KB, for incidental future changes.
  */
-const CUSTOMER_GZIP_BASELINE = 66_182;
+const CUSTOMER_GZIP_BASELINE = 67_426;
 const ALLOWED_GROWTH = 1_200;
 
 test("admin code is a separate on-demand chunk; the customer bundle has none of it", async () => {

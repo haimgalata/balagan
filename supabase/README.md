@@ -11,6 +11,10 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0002_rls.sql` | `admin_users` allow-list, `is_admin()`, default-deny Row Level Security, least-privilege grants | yes |
 | `migrations/0003_storage.sql` | Public-read `product-images` bucket (2 MB, JPEG/PNG/WebP), admin-only write, **no listing** | yes |
 | `migrations/0004_rpc.sql` | `get_storefront_catalog()` — the only thing anonymous visitors can call | yes |
+| `migrations/0005_admin_categories.sql` | Admin Categories support: atomic reorder, slug lock, `admin_product_counts()` | yes |
+| `migrations/0006_admin_products.sql` | Admin Products support: shared inventory (`stock_base_units`), `admin_reorder_products()` | yes, after first success |
+| `migrations/0007_stock_availability.sql` | `check_stock_availability()` — the cart's shared-stock quantity check | yes |
+| `migrations/0008_business_settings.sql` | `business_hours` (physical-store + online-order weekly schedules), `business_settings` (min order / delivery fee / manual pause), `get_business_settings()` | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
@@ -157,6 +161,40 @@ unverified quantity through.
 
 Then re-run `node scripts/security-test.mjs --check-signup` — it now also checks this function (hidden products never
 reveal they exist, the response never contains a raw stock number, if 0007 is missing it reports a SKIP, exit code 2).
+
+## Business Settings screen — apply migration 0008 first
+
+`/admin/settings` needs one more migration. **SQL Editor → New query → paste `migrations/0008_business_settings.sql` →
+Run** ("Success. No rows returned"; it is re-runnable — re-running it never overwrites hours/settings an admin has
+already edited, thanks to `on conflict do nothing` on the seed rows).
+
+It adds two tables and one public RPC:
+- `business_hours` — one row per (`schedule_type`, `day_of_week`); `schedule_type` is `'store'` (the physical shop's
+  opening hours) or `'orders'` (when the site accepts online orders) — two independent weekly schedules on one table,
+  seeded with today's placeholder hours (09:00–23:00 Sun–Thu, 09:00–16:00 Fri, closed Sat) for both. `day_of_week`
+  follows `Date#getDay()` (0 = Sunday). A day marked open must have both an open and a close time with open < close
+  (checked by the database, not just the admin form).
+- `business_settings` — a SINGLETON row (`id` is always `1`): `min_order_cents`/`delivery_fee_cents` (integer agorot,
+  same convention as product prices) and `orders_paused` — a manual, ONE-WAY override. It can only force online orders
+  closed early; it can never force them open outside the configured schedule: `orders_open_now = schedule says open AND
+  NOT orders_paused`. Seeded at 50₪ minimum / 15₪ delivery / not paused.
+- `get_business_settings()` — the only public read path (same pattern as `get_storefront_catalog()` /
+  `check_stock_availability()`): returns both weekly schedules plus the three settings fields, nothing else (no
+  `updated_at`, no way to tell the two tables even exist). `anon` has no table access to either table, same as every
+  other admin-writable table.
+
+Then re-run `node scripts/security-test.mjs --check-signup` — it now also checks this RPC and both tables' RLS (if 0008
+is missing it reports a SKIP, exit code 2). Because `business_settings`/`business_hours` hold REAL configuration
+(unlike the throwaway `zz-security-probe` rows used elsewhere in the script), that section saves the admin's current
+values before probing writes and restores them exactly afterward.
+
+On the page: two sections. **שעות פתיחת החנות** — the physical store's 7 days, each with an open/closed toggle and two
+time inputs (disabled while closed). **הזמנות אונליין** — the online-order 7 days the same way, plus מינימום הזמנה,
+דמי משלוח, and a manual "השבתת הזמנות" pause switch. The storefront reads all of this through
+`get_business_settings()`: the physical-store status pill (in the hero image, where it already was) gains a
+click-to-expand weekly-hours panel; the site's existing info banner becomes specifically the online-orders banner
+(green when orders are open, red when closed or paused), no longer conflating "is the shop open" with "are we taking
+online orders."
 
 ## Design notes worth knowing
 

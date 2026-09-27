@@ -106,12 +106,44 @@ test.describe("manual disable vs. out-of-stock (shared inventory)", () => {
 });
 
 test.describe("creating", () => {
-  test("a product is never required to have an image — the create form has no image field at all", async ({ page }) => {
-    await openProducts(page);
+  test("an image can be picked during creation — staged locally (no request), then uploaded right after the product is created", async ({ page }) => {
+    const db = await openProducts(page);
     await page.getByRole("button", { name: "הוספת מוצר" }).click();
     const dialog = form(page, "מוצר חדש");
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText("תמונה (אופציונלי)")).toHaveCount(0);
+    await expect(dialog.getByText("תמונה (אופציונלי)")).toBeVisible();
+
+    await dialog.locator('input[type="file"]').setInputFiles({ name: "x.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) });
+    await expect(dialog.getByRole("button", { name: "החלפת תמונה" })).toBeVisible(); // staged locally — nothing uploaded yet (no product id to upload to)
+    expect(db.uploadedImages.size).toBe(0);
+
+    await dialog.getByLabel("שם בעברית").fill("מוצר עם תמונה");
+    await dialog.getByLabel("קטגוריה").selectOption({ label: "סיגריות" });
+    await dialog.getByLabel("תת־קטגוריה").selectOption({ index: 1 });
+    await dialog.getByLabel("מחיר יחידה (₪)").fill("25");
+    await dialog.getByRole("button", { name: "שמירה" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("status")).toContainText('"מוצר עם תמונה" נוסף');
+    const created = db.state.products.find((p) => p.name_he === "מוצר עם תמונה")!;
+    expect(created.image_path).not.toBeNull();
+    expect(db.uploadedImages.size).toBe(1);
+  });
+
+  test("a product created without picking an image is saved with no photo, exactly as before", async ({ page }) => {
+    const db = await openProducts(page);
+    await page.getByRole("button", { name: "הוספת מוצר" }).click();
+    const dialog = form(page, "מוצר חדש");
+    await dialog.getByLabel("שם בעברית").fill("מוצר בלי תמונה");
+    await dialog.getByLabel("קטגוריה").selectOption({ label: "סיגריות" });
+    await dialog.getByLabel("תת־קטגוריה").selectOption({ index: 1 });
+    await dialog.getByLabel("מחיר יחידה (₪)").fill("25");
+    await dialog.getByRole("button", { name: "שמירה" }).click();
+
+    await expect(dialog).toBeHidden();
+    const created = db.state.products.find((p) => p.name_he === "מוצר בלי תמונה")!;
+    expect(created.image_path).toBeNull();
+    expect(db.uploadedImages.size).toBe(0);
   });
 
   test("blank name is refused before saving", async ({ page }) => {

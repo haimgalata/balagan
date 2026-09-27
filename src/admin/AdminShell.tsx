@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { ADMIN_ROOT, navigateAdmin, useAdminPath } from "@/admin/adminPath";
 import { CategoriesPage } from "@/admin/categories/CategoriesPage";
 import { ProductsPage } from "@/admin/products/ProductsPage";
+import { BusinessSettingsPage } from "@/admin/settings/BusinessSettingsPage";
 
 interface AdminShellProps {
   email: string;
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { label: "ראשי", path: ADMIN_ROOT, enabled: true },
   { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true },
   { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true },
+  { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true },
 ] as const;
 
 const SUMMARY_TABLES = [
@@ -154,6 +156,8 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
           <CategoriesPage client={client} />
         ) : path === `${ADMIN_ROOT}/products` ? (
           <ProductsPage client={client} />
+        ) : path === `${ADMIN_ROOT}/settings` ? (
+          <BusinessSettingsPage client={client} />
         ) : (
           <NotFound />
         )}

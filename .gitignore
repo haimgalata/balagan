@@ -6,6 +6,6 @@ dist-ssr
 .env.*
 !.env.example
 *.tsbuildinfo
-tests/step3/__screenshots__/
+tests/catalog/__screenshots__/
 test-results/
 playwright-report/

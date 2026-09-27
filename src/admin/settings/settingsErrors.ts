@@ -3,13 +3,12 @@
  * can show (pure). The database is the real enforcer (see supabase/migrations/0008_business_settings.sql) —
  * these messages only explain what it refused and why.
  */
+import type { AdminError as BaseAdminError, RawApiError } from "@/admin/shared/apiError";
+export type { RawApiError };
+
 export type AdminErrorKind = "invalid-hours" | "negative-amount" | "permission" | "setup-needed" | "network" | "unknown";
 
-export interface AdminError {
-  kind: AdminErrorKind;
-  /** Ready to show to the admin. */
-  message: string;
-}
+export type AdminError = BaseAdminError<AdminErrorKind>;
 
 export const ERROR_MESSAGES: Record<AdminErrorKind, string> = {
   "invalid-hours": "יש להזין שעת פתיחה וסגירה תקינות (פתיחה לפני סגירה) לכל יום פתוח.",
@@ -19,13 +18,6 @@ export const ERROR_MESSAGES: Record<AdminErrorKind, string> = {
   network: "אין חיבור לשרת. בדקו את החיבור ונסו שוב.",
   unknown: "הפעולה נכשלה. נסו שוב.",
 };
-
-/** The shape of a PostgREST / supabase-js error (only what we read). */
-export interface RawApiError {
-  code?: string | null;
-  message?: string | null;
-  details?: string | null;
-}
 
 export function describeError(error: RawApiError): AdminError {
   const code = error.code ?? "";

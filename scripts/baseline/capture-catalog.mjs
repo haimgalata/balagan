@@ -1,6 +1,6 @@
 /**
- * Pre-migration baseline: freezes the static catalog (src/data/*) plus the
- * OLD pricing rules (src/lib/pricing.ts) into tests/baseline/catalog.json.
+ * Pre-migration baseline: freezes the static catalog (seed-data/*) plus the
+ * OLD pricing rules (src/storefront/lib/pricing.ts) into tests/baseline/catalog.json.
  *
  * Purpose: after the Supabase migration, the database and the storefront are
  * diffed against this file to prove IDs, order, navigation and prices did not
@@ -18,8 +18,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const { products } = await import(new URL("../../src/data/products.ts", import.meta.url));
-const { categories } = await import(new URL("../../src/data/categories.ts", import.meta.url));
+const { products } = await import(new URL("../../seed-data/products.ts", import.meta.url));
+const { categories } = await import(new URL("../../seed-data/categories.ts", import.meta.url));
 const pricing = await import(new URL("../legacy/old-pricing.mjs", import.meta.url));
 
 /** Same derivation as `subcategorySlugOf` in src/components/CategorySection.tsx. */

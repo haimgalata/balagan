@@ -1,13 +1,13 @@
-import { AgeGate } from "@/components/AgeGate";
-import { Header } from "@/components/Header";
-import { Footer } from "@/components/Footer";
-import { CartDrawer } from "@/components/CartDrawer";
-import { CartSummaryBar } from "@/components/CartSummaryBar";
-import { Toast } from "@/components/Toast";
-import { CatalogProvider } from "@/context/CatalogContext";
-import { BusinessSettingsProvider } from "@/context/BusinessSettingsContext";
-import { CartProvider } from "@/context/CartContext";
-import { HomePage } from "@/pages/HomePage";
+import { AgeGate } from "@/storefront/components/AgeGate";
+import { Header } from "@/storefront/components/Header";
+import { Footer } from "@/storefront/components/Footer";
+import { CartDrawer } from "@/storefront/components/CartDrawer";
+import { CartSummaryBar } from "@/storefront/components/CartSummaryBar";
+import { Toast } from "@/storefront/components/Toast";
+import { CatalogProvider } from "@/storefront/context/CatalogContext";
+import { BusinessSettingsProvider } from "@/storefront/context/BusinessSettingsContext";
+import { CartProvider } from "@/storefront/context/CartContext";
+import { HomePage } from "@/storefront/pages/HomePage";
 
 function App() {
   return (

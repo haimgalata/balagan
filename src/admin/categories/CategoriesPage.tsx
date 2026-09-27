@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ArrowDown, ArrowUp, ChevronDown, Eye, EyeOff, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import {
   createCategory,
   createSubcategory,

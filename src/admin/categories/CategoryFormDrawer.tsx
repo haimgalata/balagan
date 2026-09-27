@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Loader2, Lock } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Drawer } from "@/components/ui/Drawer";
+import { Button } from "@/shared/ui/Button";
+import { Drawer } from "@/shared/ui/Drawer";
 import { ERROR_MESSAGES, type AdminError } from "@/admin/categories/categoryErrors";
 import { SLUG_MAX_LENGTH, suggestSlug, validateSlug, type SlugProblem } from "@/admin/categories/slug";
 

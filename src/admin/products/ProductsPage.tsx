@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import { ProductsListTab } from "@/admin/products/ProductsListTab";
 import { ProductsOrderingTab } from "@/admin/products/ProductsOrderingTab";
 import { useCategoryOptions } from "@/admin/products/useCategoryOptions";

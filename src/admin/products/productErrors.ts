@@ -3,6 +3,9 @@
  * (pure). The database is the real enforcer — client-side validation (see productValidation.ts) should catch
  * almost everything before it gets this far; these messages only explain what slipped through and why.
  */
+import type { AdminError as BaseAdminError, RawApiError } from "@/admin/shared/apiError";
+export type { RawApiError };
+
 export type AdminErrorKind =
   | "blank-name"
   | "duplicate-barcode"
@@ -17,11 +20,7 @@ export type AdminErrorKind =
   | "network"
   | "unknown";
 
-export interface AdminError {
-  kind: AdminErrorKind;
-  /** Ready to show to the admin. */
-  message: string;
-}
+export type AdminError = BaseAdminError<AdminErrorKind>;
 
 export const ERROR_MESSAGES: Record<AdminErrorKind, string> = {
   "blank-name": "יש להזין שם בעברית.",
@@ -37,13 +36,6 @@ export const ERROR_MESSAGES: Record<AdminErrorKind, string> = {
   network: "אין חיבור לשרת. בדקו את החיבור ונסו שוב.",
   unknown: "הפעולה נכשלה. נסו שוב.",
 };
-
-/** The shape of a PostgREST / supabase-js error (only what we read). */
-export interface RawApiError {
-  code?: string | null;
-  message?: string | null;
-  details?: string | null;
-}
 
 export function describeError(error: RawApiError): AdminError {
   const code = error.code ?? "";

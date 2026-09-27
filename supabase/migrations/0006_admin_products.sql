@@ -20,7 +20,7 @@
 --      exactly one place.
 --   2. get_storefront_catalog() — unchanged output shape, now reads the generated columns instead of
 --      recomputing the old per-option formula. Must stay byte-identical for every existing product
---      (tests/step3's baseline, and scripts/verify-seed.mjs, both check this).
+--      (tests/catalog's baseline, and scripts/verify-seed.mjs, both check this).
 --   3. admin_reorder_products() — same atomic "rewrite sort_order 10,20,30..." pattern as 0005's category
 --      reorder functions, scoped to ONE (category_id, subcategory_id) group at a time (subcategory_id may
 --      be NULL — the "no subcategory" group of a category that allows one). The list must be exactly that

@@ -7,7 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ANON_KEY?: string;
   /**
    * Where the storefront reads its catalog from. Defaults to "supabase" when the two
-   * variables above are set and "static" (the bundled src/data files) otherwise.
+   * variables above are set and "static" (the bundled src/storefront/data files) otherwise.
    * Set to "static" to instantly roll back to the built-in catalog.
    */
   readonly VITE_CATALOG_SOURCE?: "supabase" | "static";

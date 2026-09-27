@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ChevronLeft, ChevronRight, Eye, EyeOff, ImageOff, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import type { CategoryRow, SubcategoryRow } from "@/admin/categories/categoriesApi";
 import { ProductFormDrawer } from "@/admin/products/ProductFormDrawer";
 import {

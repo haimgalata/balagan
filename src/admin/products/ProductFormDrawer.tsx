@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Drawer } from "@/components/ui/Drawer";
+import { Button } from "@/shared/ui/Button";
+import { Drawer } from "@/shared/ui/Drawer";
 import type { CategoryRow, SubcategoryRow } from "@/admin/categories/categoriesApi";
 import { ImageUploader } from "@/admin/products/ImageUploader";
 import { ProductImagePicker } from "@/admin/products/ProductImagePicker";

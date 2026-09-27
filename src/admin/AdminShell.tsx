@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, LogOut } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import { ADMIN_ROOT, navigateAdmin, useAdminPath } from "@/admin/adminPath";
 import { CategoriesPage } from "@/admin/categories/CategoriesPage";
 import { ProductsPage } from "@/admin/products/ProductsPage";

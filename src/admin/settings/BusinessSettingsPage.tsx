@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, X } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import { updateBusinessHourDay, updateBusinessSettings, type BusinessHourRow, type BusinessSettingsRow } from "@/admin/settings/settingsApi";
 import { useBusinessSettingsManager, type Feedback } from "@/admin/settings/useBusinessSettingsManager";
 

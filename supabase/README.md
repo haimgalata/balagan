@@ -154,7 +154,7 @@ adds ONE more function, `check_stock_availability()`: the cart sends the PROPOSE
 per product, nothing else about the row (no stock count, no `track_stock`, not even whether a hidden product exists). It is
 public, like `get_storefront_catalog()`, and read-only: it doesn't lock, reserve or deduct anything.
 
-The storefront calls it before every add/increase (`src/context/CartContext.tsx`) and again whenever the cart drawer opens
+The storefront calls it before every add/increase (`src/storefront/context/CartContext.tsx`) and again whenever the cart drawer opens
 (to catch stock that dropped after items were already added). If the check itself can't be completed — network error,
 migration not yet applied — the add is refused too (fails **closed**), with its own Hebrew message, rather than let an
 unverified quantity through.

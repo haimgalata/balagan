@@ -1,5 +1,5 @@
 /**
- * ONE-OFF generator: static catalog -> src/data/fallbackCatalog.ts
+ * ONE-OFF generator: static catalog -> src/storefront/data/fallbackCatalog.ts
  *
  * The storefront's offline fallback (used when the database can't be reached and nothing is
  * cached, and by VITE_CATALOG_SOURCE=static) is a literal snapshot in the SAME shape the
@@ -18,8 +18,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { products } = await import(new URL("../src/data/products.ts", import.meta.url));
-const { categories } = await import(new URL("../src/data/categories.ts", import.meta.url));
+const { products } = await import(new URL("../seed-data/products.ts", import.meta.url));
+const { categories } = await import(new URL("../seed-data/categories.ts", import.meta.url));
 
 const UNITS_PER_PACKAGE = 10;
 const PACKAGE_DISCOUNT_CENTS = 1000;
@@ -72,7 +72,7 @@ const src = `/**
  * the database can't be reached and nothing is cached, or when VITE_CATALOG_SOURCE=static.
  * Package prices are plain per-product data — nothing here or in the app computes them.
  */
-import type { RpcCatalog } from "@/lib/catalogApi";
+import type { RpcCatalog } from "@/storefront/lib/catalogApi";
 
 export const fallbackCatalog: RpcCatalog = {
   categories: ${JSON.stringify(rpcCategories, null, 2).replace(/\n/g, "\n  ")},
@@ -82,6 +82,6 @@ ${rpcProducts.map((p) => "    " + JSON.stringify(p)).join(",\n")},
 };
 `;
 
-const outPath = resolve(root, "src", "data", "fallbackCatalog.ts");
+const outPath = resolve(root, "src", "storefront", "data", "fallbackCatalog.ts");
 writeFileSync(outPath, src, "utf8");
 console.log(`wrote ${outPath} (${src.length} bytes): ${rpcCategories.length} categories, ${rpcProducts.length} products`);

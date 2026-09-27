@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import type { SignedOutNotice } from "@/admin/adminConfig";
 import type { SignInFailure, SignInResult } from "@/admin/useAdminSession";
 

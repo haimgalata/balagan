@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/shared/ui/Button";
 import { AdminLogin } from "@/admin/AdminLogin";
 import { AdminShell } from "@/admin/AdminShell";
 import { useAdminSession } from "@/admin/useAdminSession";

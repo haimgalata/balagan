@@ -1,7 +1,7 @@
 import { defineConfig, type PlaywrightTestConfig } from "@playwright/test";
 
 /**
- * Storefront regression suite (tests/step3, tests/step4): the storefront must look and behave like the
+ * Storefront regression suite (tests/catalog, tests/cart): the storefront must look and behave like the
  * pre-migration baseline (tag `baseline/pre-product-management`), whether the
  * catalog comes from the bundled files ("static") or from the database ("supabase").
  *
@@ -12,7 +12,7 @@ import { defineConfig, type PlaywrightTestConfig } from "@playwright/test";
  * Both app variants are served by their own Vite dev server (ports below). The
  * "supabase" variant points at a fake host and the tests intercept its RPC in the
  * browser, so no real backend or credentials are involved. Chrome (installed) is used.
- * Screenshots are git-ignored (multi-MB) and regenerated from the tag — see tests/step3/README.md.
+ * Screenshots are git-ignored (multi-MB) and regenerated from the tag — see tests/catalog/README.md.
  */
 const PORTS = { baseline: 5190, static: 5191, supabase: 5192, live: 5193 } as const;
 export const STUB_SUPABASE_URL = "https://stub.supabase.test";

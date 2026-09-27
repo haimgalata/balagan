@@ -55,7 +55,7 @@ export function AdminLogin({ notice, onSignIn }: AdminLoginProps) {
     <main className="flex min-h-screen items-center justify-center bg-brand-bg px-4 py-10">
       <div className="w-full max-w-sm rounded-2xl border border-brand-border bg-brand-bg-elevated p-6 shadow-2xl sm:p-8">
         <div className="mb-6 text-center">
-          <span className="font-display text-3xl text-brand-gold">בלגן</span>
+          <span className="font-display text-3xl text-brand-gold">בלאגן</span>
           <h1 className="mt-2 text-lg font-semibold text-brand-text">כניסה לניהול</h1>
         </div>
 

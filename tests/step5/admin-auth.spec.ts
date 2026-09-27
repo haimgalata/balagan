@@ -27,7 +27,7 @@ test.describe("the login screen", () => {
     await expect(page.getByLabel("אימייל")).toBeVisible();
     await expect(page.getByLabel("סיסמה", { exact: true })).toBeVisible();
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
-    await expect(page).toHaveTitle("ניהול · בלגן");
+    await expect(page).toHaveTitle("ניהול · בלאגן");
     // no sign-up, no password reset, no admin data on screen
     await expect(page.getByText(/הרשמה|שכחתי|Sign up/i)).toHaveCount(0);
     expect(stub.tableCalls()).toHaveLength(0);

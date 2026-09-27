@@ -33,7 +33,7 @@ export default function AdminApp() {
     meta.content = "noindex,nofollow,noarchive";
     document.head.appendChild(meta);
     const previousTitle = document.title;
-    document.title = "ניהול · בלגן";
+    document.title = "ניהול · בלאגן";
     return () => {
       meta.remove();
       document.title = previousTitle;

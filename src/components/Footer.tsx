@@ -13,10 +13,10 @@ export function Footer() {
   return (
     <footer className="border-t border-brand-tobacco-strong bg-brand-bg-secondary">
       <div className="mx-auto flex max-w-container flex-col items-center gap-5 px-4 py-8 text-center sm:px-6 sm:py-10">
-        <span className="font-display text-xl text-brand-gold">בלגן</span>
+        <span className="font-display text-xl text-brand-gold">בלאגן</span>
 
         <p className="max-w-md text-sm leading-relaxed text-brand-text-muted">
-          מרכז הסיגריות והטבק בלגן — חנות ותיקה למוצרי עישון וטבק.
+          מרכז הסיגריות והטבק בלאגן — חנות ותיקה למוצרי עישון וטבק.
         </p>
 
         <nav aria-label="קטגוריות" className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
@@ -45,7 +45,7 @@ export function Footer() {
           המכירה אסורה לבני 21 ומטה. העישון מזיק לבריאות.
         </p>
         <p className="mt-1 text-xs text-brand-text-muted">
-          © {new Date().getFullYear()} בלגן - מרכז הסיגריות והטבק. כל הזכויות שמורות.
+          © {new Date().getFullYear()} בלאגן - מרכז הסיגריות והטבק. כל הזכויות שמורות.
         </p>
       </div>
     </footer>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-E-commerce site for a physical Hebrew-speaking tobacco/smoking-products store ("בלגן - מרכז הסיגריות והטבק"). React + TypeScript + Vite + Tailwind CSS + lucide-react, backed by Supabase (Postgres + Row Level Security + Auth + Storage) for the catalog and a private admin area. The build is still a static SPA — Vite just outputs `dist/`; nothing runs server-side except Supabase itself.
+E-commerce site for a physical Hebrew-speaking tobacco/smoking-products store ("בלאגן - מרכז הסיגריות והטבק"). React + TypeScript + Vite + Tailwind CSS + lucide-react, backed by Supabase (Postgres + Row Level Security + Auth + Storage) for the catalog and a private admin area. The build is still a static SPA — Vite just outputs `dist/`; nothing runs server-side except Supabase itself.
 
 **The "מעבר לתשלום" (checkout) button in `CartDrawer.tsx` is intentionally inert.** There is no order-processing/payment backend; wiring one up is a future step, not something to add unprompted. Everything documented below as "the real protection" (RLS, `is_admin()`) exists precisely because the admin area and the database are real and reachable — don't reintroduce a "no backend" assumption anywhere in this codebase.
 

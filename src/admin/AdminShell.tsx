@@ -99,7 +99,7 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
       <header className="border-b border-brand-border bg-brand-bg-elevated">
         <div className="mx-auto flex max-w-container items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-baseline gap-2">
-            <span className="font-display text-xl text-brand-gold">בלגן</span>
+            <span className="font-display text-xl text-brand-gold">בלאגן</span>
             <span className="text-sm font-medium text-brand-text-muted">ניהול</span>
           </div>
           <div className="flex min-w-0 items-center gap-3">

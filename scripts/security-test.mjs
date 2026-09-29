@@ -14,9 +14,15 @@
  * one stock_base_units count plus independent unit_available/package_available switches — and the
  * per-(category,subcategory) product reorder function), the cart's shared-stock quantity check added by
  * migration 0007 (check_stock_availability — never leaks the raw stock count, hidden products, or whether a
- * product exists), and the Business Settings support added by migration 0008 (get_business_settings() —
- * physical-store hours, online-order hours, min order, delivery fee, manual pause). If a migration has not
- * been applied yet, its section reports a SKIP (exit code 2) instead of failing.
+ * product exists), the Business Settings support added by migration 0008 (get_business_settings() —
+ * physical-store hours, online-order hours, min order, delivery fee, manual pause), and the Orders support
+ * added by migration 0009: anon/authenticated get NO direct table access to orders/order_items/
+ * payment_attempts/payment_events (everything goes through create_order()/get_order_status()); create_order()
+ * re-validates every field server-side and is idempotent; release_expired_order() is unreachable by anyone
+ * over the API; expire_stale_orders() is authenticated-but-admin-gated; and — the one genuinely new trust
+ * tier in this project — confirm_payment() is proven unreachable not just by anon and a non-admin user but
+ * by the ADMIN token too, since it is granted only to service_role, which this script never uses. If a
+ * migration has not been applied yet, its section reports a SKIP (exit code 2) instead of failing.
  *
  * Zero dependencies (plain fetch, Node >= 18). Uses ONLY the public anon key plus
  * test-account passwords supplied through the environment — never the
@@ -107,26 +113,36 @@ const upload = (p, token, bytes, type) => call("POST", storagePath(p), { token, 
 // probe fixtures (explicit ids => the product_id_seq sequence is never touched)
 const CAT = randomUUID(), SUB = randomUUID();
 const OTHER_CAT = randomUUID(), OTHER_SUB = randomUUID(), SUB2 = randomUUID();
-const PID = "900000001", PID_BAD = "900000002", PID2 = "900000003";
+const PID = "900000001", PID_BAD = "900000002", PID2 = "900000003", PID_ORDER = "900000004";
 const IMG = `products/${PID}/probe.png`;
 const BARCODE = "ZZ-SECURITY-PROBE-1";
 const PRIVATE_KEYS = /"(barcode|stock_base_units|track_stock|unit_available|package_available|unit_in_stock|package_in_stock|is_visible|sort_order|created_at|updated_at|user_id)"\s*:/;
+/** order snapshot fields that must NEVER appear in get_order_status()'s narrow response. */
+const ORDER_PII_KEYS = /"(first_name|last_name|phone|email|street|house_number|entrance|floor|apartment|intercom_code|delivery_notes|customer_id|idempotency_key)"\s*:/;
 
 let adminToken = "", userToken = "", userId = "";
-const created = { product: false, product2: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
+const orderIds = []; // probe orders created during the run (order_items/payment_attempts/payment_events cascade-delete with them)
+const created = { product: false, product2: false, productOrder: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
 
 async function cleanup() {
   section("Cleanup");
   const res = [];
+  // orders first (order_items/payment_attempts/payment_events cascade with them) — deleted before the
+  // products they reference, even though order_items.product_id would only be SET NULL, not blocked.
+  if (orderIds.length) res.push(["orders", (await rest("DELETE", `orders?id=in.(${orderIds.join(",")})`, { token: adminToken })).status < 300]);
   if (created.image) res.push(["storage object", (await call("DELETE", `${URL_}/storage/v1/object/product-images`, { token: adminToken, body: { prefixes: [IMG] } })).status < 300]);
-  res.push(["products", (await rest("DELETE", `products?id=in.(${PID},${PID_BAD},${PID2})`, { token: adminToken })).status < 300]);
+  res.push(["products", (await rest("DELETE", `products?id=in.(${PID},${PID_BAD},${PID2},${PID_ORDER})`, { token: adminToken })).status < 300]);
   res.push(["subcategories", (await rest("DELETE", `subcategories?id=in.(${SUB},${SUB2},${OTHER_SUB})`, { token: adminToken })).status < 300]);
   res.push(["categories", (await rest("DELETE", `categories?id=in.(${CAT},${OTHER_CAT})`, { token: adminToken })).status < 300]);
-  const left = await rest("GET", `products?id=in.(${PID},${PID_BAD},${PID2})&select=id`, { token: adminToken });
+  const left = await rest("GET", `products?id=in.(${PID},${PID_BAD},${PID2},${PID_ORDER})&select=id`, { token: adminToken });
   const leftCat = await rest("GET", `categories?slug=like.zz-security-probe*&select=id`, { token: adminToken });
-  const clean = left.json?.length === 0 && leftCat.json?.length === 0;
+  const leftOrders = orderIds.length ? await rest("GET", `orders?id=in.(${orderIds.join(",")})&select=id`, { token: adminToken }) : { json: [] };
+  const clean = left.json?.length === 0 && leftCat.json?.length === 0 && leftOrders.json?.length === 0;
   console.log(`  probe rows removed: ${clean ? "yes" : "NO — remove manually:"}`);
-  if (!clean) console.log("    delete from public.products where id in ('900000001','900000002','900000003');\n    delete from public.subcategories where slug like 'zz-security-probe%';\n    delete from public.categories where slug like 'zz-security-probe%';\n    (and delete the object products/900000001/probe.png from bucket product-images)");
+  if (!clean) {
+    if (orderIds.length) console.log(`    delete from public.orders where id in (${orderIds.map((id) => `'${id}'`).join(",")});`);
+    console.log("    delete from public.products where id in ('900000001','900000002','900000003','900000004');\n    delete from public.subcategories where slug like 'zz-security-probe%';\n    delete from public.categories where slug like 'zz-security-probe%';\n    (and delete the object products/900000001/probe.png from bucket product-images)");
+  }
 }
 
 async function main() {
@@ -531,6 +547,179 @@ async function main() {
       check("business settings restored to their original values after the probe",
         restored.json?.min_order_cents === origSettings?.min_order_cents && restored.json?.orders_paused === origSettings?.orders_paused, JSON.stringify(restored.json));
     }
+  }
+
+  // ------------------------------------------------------------- 5d. orders (migration 0009)
+  const probe0009 = await rpc("create_order", ANON, { p_payload: {}, p_idempotency_key: randomUUID() });
+  if (probe0009.status === 404 || pgCode(probe0009) === "PGRST202") {
+    skipped.push("orders (apply supabase/migrations/0009_orders.sql, then re-run)");
+    section("Orders (0009)  --  SKIPPED: migration 0009 is not applied yet");
+  } else {
+    section("Orders — access control for orders/order_items/payment_attempts/payment_events (migration 0009)");
+    check("(fixture) create_order() exists and rejects an empty payload (no row created)", probe0009.status >= 400, `HTTP ${probe0009.status} ${probe0009.text.slice(0, 120)}`);
+
+    // a dedicated, hidden probe product — priced comfortably above the REAL min_order_cents (restored by
+    // section 5c's finally above) so these probe orders are never accidentally refused as too small.
+    const bs = await rpc("get_business_settings", ANON);
+    const probePrice = Math.max(999, (bs.json?.min_order_cents ?? 0) / 100 + 50);
+    r = await rest("POST", "products", { token: adminToken, body: {
+      id: PID_ORDER, category_id: CAT, subcategory_id: SUB, name_he: "מוצר בדיקת הזמנות", brand: "ZZ",
+      unit_price: probePrice, track_stock: true, stock_base_units: 5, is_visible: false } });
+    created.productOrder = r.status === 201;
+    check("(fixture) probe order-product created (hidden, track_stock, 5 units)", created.productOrder, `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+
+    const baseCustomer = {
+      first_name: "בדיקה", last_name: "אבטחה", phone: "0501234567", email: null,
+      city: "נתיבות", street: "הרצל", house_number: "1",
+      entrance: null, floor: null, apartment: null, intercom_code: null, notes: null,
+      age_confirmed: true, terms_accepted: true,
+    };
+    const orderPayload = (overrides = {}, customerOverrides = {}) => ({
+      items: [{ product_id: PID_ORDER, option: "unit", quantity: 1 }],
+      payment_method: "cash",
+      ...overrides,
+      customer: { ...baseCustomer, ...customerOverrides },
+    });
+    const createOrder = (token, payload, key) => rpc("create_order", token, { p_payload: payload, p_idempotency_key: key });
+    const noRowFor = async (key) => (await rest("GET", `orders?idempotency_key=eq.${key}&select=id`, { token: adminToken })).json?.length === 0;
+
+    // a fully hidden product (chain not visible) can't be ordered at all — same rule as the catalog/stock check
+    let key = randomUUID();
+    r = await createOrder(ANON, orderPayload(), key);
+    check("create_order() refuses a hidden product", r.status >= 400 && /^PRODUCT_UNAVAILABLE/.test(r.json?.message ?? ""), `HTTP ${r.status} ${r.text.slice(0, 150)}`);
+    check("...and created no order row", await noRowFor(key));
+
+    // make the probe visible for the rest of this section (restored to hidden at the end)
+    await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: true } });
+    await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { is_visible: true } });
+    await rest("PATCH", `products?id=eq.${PID_ORDER}`, { token: adminToken, body: { is_visible: true } });
+
+    // server-side validation guards — every one of these must be enforced regardless of what the frontend
+    // already checks, since this RPC is the only thing standing between a crafted request and a real order.
+    const badOrder = async (name, payload, codePattern) => {
+      const k = randomUUID();
+      const x = await createOrder(ANON, payload, k);
+      check(`create_order() rejects: ${name}`, x.status >= 400 && codePattern.test(x.json?.message ?? ""), `HTTP ${x.status} ${x.text.slice(0, 150)}`);
+      check(`...and created no order row (${name})`, await noRowFor(k));
+    };
+    r = await createOrder(ANON, orderPayload(), null);
+    check("create_order() rejects a null idempotency key", r.status >= 400 && /^MISSING_IDEMPOTENCY_KEY/.test(r.json?.message ?? ""), `HTTP ${r.status} ${r.text.slice(0, 150)}`);
+    await badOrder("empty items array", orderPayload({ items: [] }), /^EMPTY_ORDER/);
+    await badOrder("invalid payment method", orderPayload({ payment_method: "bitcoin" }), /^INVALID_PAYMENT_METHOD/);
+    await badOrder("missing first/last name", orderPayload({}, { first_name: "" }), /^MISSING_NAME/);
+    await badOrder("missing phone", orderPayload({}, { phone: "" }), /^MISSING_PHONE/);
+    await badOrder("delivery outside Netivot", orderPayload({}, { city: "תל אביב" }), /^UNSUPPORTED_CITY/);
+    await badOrder("missing street/house number", orderPayload({}, { street: "" }), /^MISSING_ADDRESS/);
+    await badOrder("age not confirmed", orderPayload({}, { age_confirmed: false }), /^AGE_NOT_CONFIRMED/);
+    await badOrder("terms not accepted", orderPayload({}, { terms_accepted: false }), /^TERMS_NOT_ACCEPTED/);
+    await badOrder("unknown product id", orderPayload({ items: [{ product_id: "zz-does-not-exist", option: "unit", quantity: 1 }] }), /^PRODUCT_UNAVAILABLE/);
+
+    // ---- a real cash order: anon CAN call create_order(), and it does exactly what it should ----
+    const cashKey = randomUUID();
+    const cash = await createOrder(ANON, orderPayload(), cashKey);
+    check("anon CAN call create_order() and place a real (cash) order", cash.status === 200 && typeof cash.json?.order_id === "string", `HTTP ${cash.status} ${cash.text.slice(0, 150)}`);
+    check("cash order comes back confirmed, payment pending, no payment_attempt_id",
+      cash.json?.order_status === "confirmed" && cash.json?.payment_status === "pending" && cash.json?.payment_method === "cash" && cash.json?.payment_attempt_id === null,
+      JSON.stringify(cash.json));
+    check("cash order total = probe price + real delivery fee", cash.json?.total_cents === Math.round(probePrice * 100) + (bs.json?.delivery_fee_cents ?? 0), JSON.stringify({ cash: cash.json, deliveryFee: bs.json?.delivery_fee_cents }));
+    if (cash.json?.order_id) orderIds.push(cash.json.order_id);
+    const stockAfterCash = await rest("GET", `products?id=eq.${PID_ORDER}&select=stock_base_units,stock_reserved_units`, { token: adminToken });
+    check("stock was permanently deducted for the cash order (5 -> 4)", stockAfterCash.json?.[0]?.stock_base_units === 4 && stockAfterCash.json?.[0]?.stock_reserved_units === 0, JSON.stringify(stockAfterCash.json));
+
+    // idempotency: the SAME key returns the SAME order, never a second one
+    const cashRetry = await createOrder(ANON, orderPayload(), cashKey);
+    check("a repeat call with the same idempotency key returns the SAME order (double-click / refresh safe)",
+      cashRetry.status === 200 && cashRetry.json?.order_id === cash.json?.order_id, JSON.stringify(cashRetry.json));
+    const dupeCount = await rest("GET", `orders?idempotency_key=eq.${cashKey}&select=id`, { token: adminToken });
+    check("...and only ONE order row exists for that key", dupeCount.json?.length === 1, JSON.stringify(dupeCount.json));
+
+    // a non-admin authenticated user can ALSO call create_order() — this is a guest/customer RPC, not admin-only
+    if (userToken) {
+      const uKey = randomUUID();
+      r = await createOrder(userToken, orderPayload({ items: [] }), uKey); // a rejection still proves it's reachable, without spending more probe stock
+      check("a logged-in non-admin can also reach create_order() (business rejection, not a permission denial)", r.status >= 400 && /^EMPTY_ORDER/.test(r.json?.message ?? ""), `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+    }
+
+    // ---- a real card order: to exercise payment_attempts/payment_events RLS below ----
+    const cardKey = randomUUID();
+    const card = await createOrder(ANON, orderPayload({ payment_method: "card" }), cardKey);
+    check("anon CAN place a card order — reserved, not deducted, with a payment_attempt_id", card.status === 200 && typeof card.json?.payment_attempt_id === "string", `HTTP ${card.status} ${card.text.slice(0, 150)}`);
+    check("card order is pending/pending", card.json?.order_status === "pending" && card.json?.payment_status === "pending", JSON.stringify(card.json));
+    if (card.json?.order_id) orderIds.push(card.json.order_id);
+    const stockAfterCard = await rest("GET", `products?id=eq.${PID_ORDER}&select=stock_base_units,stock_reserved_units`, { token: adminToken });
+    check("stock was RESERVED for the card order, base units untouched (4/0 -> 4/1)", stockAfterCard.json?.[0]?.stock_base_units === 4 && stockAfterCard.json?.[0]?.stock_reserved_units === 1, JSON.stringify(stockAfterCard.json));
+
+    // ---- table access: orders / order_items / payment_attempts / payment_events ----
+    for (const t of ["orders", "order_items", "payment_attempts", "payment_events"]) {
+      r = await rest("GET", `${t}?select=*&limit=1`);
+      check(`anon cannot SELECT ${t}`, isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+    for (const [n, method, path, body] of [
+      ["INSERT orders", "POST", "orders", { payment_method: "cash", idempotency_key: randomUUID(), first_name: "x", last_name: "x", phone: "x", city: "נתיבות", street: "x", house_number: "1", age_confirmed_at: new Date().toISOString(), terms_accepted_at: new Date().toISOString(), subtotal_cents: 0, delivery_fee_cents: 0, total_cents: 0 }],
+      ["UPDATE orders", "PATCH", `orders?id=eq.${cash.json?.order_id}`, { order_status: "cancelled" }],
+      ["DELETE orders", "DELETE", `orders?id=eq.${cash.json?.order_id}`, undefined],
+      ["INSERT order_items", "POST", "order_items", { order_id: cash.json?.order_id, product_name_snapshot: "x", option: "unit", option_label_snapshot: "x", unit_price_cents: 1, regular_price_cents: 1, quantity: 1, base_units: 1, line_total_cents: 1 }],
+      ["INSERT payment_attempts", "POST", "payment_attempts", { order_id: card.json?.order_id, amount_cents: 1 }],
+    ]) { r = await rest(method, path, { body }); check(`anon cannot ${n}`, isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`); }
+    check("probe cash order unchanged after anon attempts", (await rest("GET", `orders?id=eq.${cash.json?.order_id}&select=order_status`, { token: adminToken })).json?.[0]?.order_status === "confirmed");
+
+    if (userToken) {
+      for (const t of ["orders", "order_items", "payment_attempts", "payment_events"]) {
+        r = await rest("GET", `${t}?select=*`, { token: userToken });
+        check(`non-admin sees 0 rows of ${t} (customer_id is null on every order — the self-select policy matches nobody yet)`, deniedOrEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      }
+      for (const [n, method, path, body] of [
+        ["UPDATE orders", "PATCH", `orders?id=eq.${cash.json?.order_id}`, { order_status: "cancelled" }],
+        ["DELETE orders", "DELETE", `orders?id=eq.${cash.json?.order_id}`, undefined],
+      ]) { r = await rest(method, path, { token: userToken, body }); check(`non-admin ${n} changes nothing`, deniedOrEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`); }
+    }
+
+    r = await rest("GET", `orders?id=eq.${cash.json?.order_id}&select=id,first_name,phone,total_cents`, { token: adminToken });
+    check("admin CAN read the full order, including the customer snapshot", r.json?.[0]?.first_name === "בדיקה" && r.json?.[0]?.phone === "0501234567", JSON.stringify(r.json));
+    r = await rest("GET", `order_items?order_id=eq.${cash.json?.order_id}&select=*`, { token: adminToken });
+    check("admin CAN read the order's line items", r.json?.length === 1 && r.json?.[0]?.product_id === PID_ORDER, JSON.stringify(r.json));
+    r = await rest("GET", `payment_attempts?order_id=eq.${card.json?.order_id}&select=*`, { token: adminToken });
+    check("admin CAN read the card order's payment attempt", r.json?.length === 1 && r.json?.[0]?.status === "created", JSON.stringify(r.json));
+
+    // ---- get_order_status(): narrow, PII-free, anon-callable ----
+    r = await rpc("get_order_status", ANON, { p_order_id: cash.json?.order_id });
+    check("anon CAN call get_order_status()", r.status === 200 && r.json?.order_number === cash.json?.order_number, JSON.stringify(r.json));
+    check("...status only: no PII, no address, no idempotency_key leaks out", !ORDER_PII_KEYS.test(r.text), r.text);
+    check("...response has exactly the narrow field set", Object.keys(r.json ?? {}).sort().join(",") === "order_number,order_status,payment_method,payment_status,total_cents");
+    r = await rpc("get_order_status", ANON, { p_order_id: randomUUID() });
+    check("get_order_status() for a nonexistent order returns null, not an error or a hint either way", r.status === 200 && r.json === null, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    // ---- release_expired_order(): internal only — unreachable by ANYONE over the API, admin included ----
+    for (const [who, token] of [["anon", ANON], ["non-admin", userToken], ["admin", adminToken]]) {
+      if (!token) continue;
+      r = await rpc("release_expired_order", token, { p_order_id: card.json?.order_id });
+      check(`${who} cannot call release_expired_order() (no grant to anyone — internal use only)`, isDenied(r) || r.status === 404, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+
+    // ---- expire_stale_orders(): reachable by authenticated, but gated on is_admin() inside the function ----
+    r = await rpc("expire_stale_orders", ANON);
+    check("anon cannot call expire_stale_orders()", isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    if (userToken) {
+      r = await rpc("expire_stale_orders", userToken);
+      check("non-admin's expire_stale_orders() is refused (not authorized, from inside the function)", r.status >= 400 && /not authorized/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+    r = await rpc("expire_stale_orders", adminToken);
+    check("admin CAN call expire_stale_orders()", r.status === 200 && typeof r.json === "number", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    check("...and it did NOT touch our still-fresh card order (reserved_until is 30 min out)", (await rest("GET", `orders?id=eq.${card.json?.order_id}&select=order_status`, { token: adminToken })).json?.[0]?.order_status === "pending");
+
+    // ---- confirm_payment(): the one function granted ONLY to service_role — proven unreachable by anon,
+    // a non-admin, AND the admin's own token (is_admin() is a completely different thing from service_role) ----
+    const confirmArgs = { p_payment_attempt_id: card.json?.payment_attempt_id, p_provider_event_id: `zz-probe-${randomUUID()}`, p_outcome: "failed" };
+    for (const [who, token] of [["anon", ANON], ["non-admin", userToken], ["admin (is_admin() = true, but NOT service_role)", adminToken]]) {
+      if (!token) continue;
+      r = await rpc("confirm_payment", token, confirmArgs);
+      check(`${who} cannot call confirm_payment()`, isDenied(r) || r.status === 404, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+    check("...and the card order's payment_attempt is untouched (still 'created')", (await rest("GET", `payment_attempts?order_id=eq.${card.json?.order_id}&select=status`, { token: adminToken })).json?.[0]?.status === "created");
+
+    // restore the probe category/subcategory to hidden (PID_ORDER itself is deleted entirely in cleanup)
+    await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: false } });
+    await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { is_visible: false } });
   }
 
   // ------------------------------------------------------------------- 6. sign-ups

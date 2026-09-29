@@ -1,32 +1,34 @@
-import { useState } from "react";
-import { Minus, Plus, ShoppingCart, Trash2 } from "lucide-react";
+import { ShoppingCart } from "lucide-react";
 import { useCart } from "@/storefront/context/CartContext";
+import { CartLineRow } from "@/storefront/components/CartLineRow";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
 import { useBusinessSettings } from "@/storefront/context/BusinessSettingsContext";
 import { formatPrice } from "@/storefront/lib/pricing";
 
-const CHECKOUT_MESSAGE_MS = 4000;
-
 /**
  * Cart drawer — frontend-only, backed by CartContext (localStorage).
  *
  * One row per line = a product + the option the customer explicitly chose (a unit, or the
- * product's package). Each row is priced from that option's own price — its regular price, or
- * (with the regular price struck through) its sale price while that option's sale is active — so
- * the customer sees exactly what they chose and what it costs. Nothing is converted between
- * options. A line whose option is out of stock is marked "אזל" and left out of the total.
- * "מעבר לתשלום" is intentionally inert for now — clicking it shows an in-panel message instead
- * of a native `alert()`; wire it up to a real checkout flow once a payment provider exists.
+ * product's package), rendered by the shared `CartLineRow` (also used by the checkout page's
+ * order summary, so both stay identical). A line whose option is out of stock is marked "אזל"
+ * and left out of the total.
+ *
+ * "מעבר לתשלום" is a real navigation to `/checkout` (see `src/checkout/`) once the cart total
+ * meets the store's minimum order — below that, the button stays disabled with an explanation.
+ * Checkout itself still ends in a "coming soon" state for now: there is no order-processing/
+ * payment backend yet, only a fully validated details flow leading up to it.
  */
 export function CartDrawer() {
   const { lines, totalPriceCents, isOpen, closeCart, increment, decrement, removeLine } = useCart();
   const { settings } = useBusinessSettings();
-  const [showCheckoutMessage, setShowCheckoutMessage] = useState(false);
+
+  const remainingForMinCents = Math.max(0, settings.min_order_cents - totalPriceCents);
+  const belowMinimum = remainingForMinCents > 0;
 
   const handleCheckoutClick = () => {
-    setShowCheckoutMessage(true);
-    window.setTimeout(() => setShowCheckoutMessage(false), CHECKOUT_MESSAGE_MS);
+    if (belowMinimum) return; // the button is disabled too; this is just defense in depth
+    window.location.assign("/checkout");
   };
 
   return (
@@ -42,96 +44,15 @@ export function CartDrawer() {
       ) : (
         <div className="flex h-full flex-col">
           <ul className="flex-1 overflow-y-auto px-4 py-4">
-            {lines.map((line) => {
-              const { product, option, quantity, label, pricing, available, overLimit } = line;
-              const optionText =
-                option === "package" && product.package ? `${label} (${product.package.unitCount} יח׳)` : label;
-
-              return (
-                <li
-                  key={line.key}
-                  className="flex gap-3 border-b border-brand-border py-4 first:pt-0 last:border-b-0"
-                >
-                  <img
-                    src={product.image}
-                    alt={product.name}
-                    className={`h-16 w-16 shrink-0 rounded-md border border-brand-border object-cover ${
-                      available ? "" : "opacity-50"
-                    }`}
-                  />
-
-                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-brand-text">{product.name}</p>
-                        <p className="text-xs text-brand-text-muted">
-                          {product.brand} · {optionText}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeLine(product.id, option)}
-                        aria-label={`הסר ${product.name} (${optionText}) מהסל`}
-                        className="shrink-0 rounded-md p-1 text-brand-text-muted outline-none transition-colors hover:text-brand-danger focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-
-                    <div className="flex flex-col gap-0.5 text-xs text-brand-text-muted">
-                      <div className="flex items-center justify-between">
-                        <span>
-                          {quantity} × {label} (
-                          {pricing.onSale && (
-                            <span className="text-brand-danger line-through">₪{formatPrice(pricing.regularCents)} </span>
-                          )}
-                          ₪{formatPrice(pricing.effectiveCents)})
-                        </span>
-                        <span className="text-brand-text">₪{formatPrice(line.lineTotalCents)}</span>
-                      </div>
-                      {available && line.savingsCents > 0 && (
-                        <div className="flex items-center justify-between text-brand-success">
-                          <span>מבצע</span>
-                          <span>-₪{formatPrice(line.savingsCents)}</span>
-                        </div>
-                      )}
-                      {!available && <p className="text-brand-danger">אזל — לא נכלל בסכום</p>}
-                      {available && overLimit && (
-                        <p className="text-brand-danger">הכמות שבסל אינה זמינה יותר במלאי — אפשר להקטין אותה</p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 rounded-md border border-brand-border">
-                        <button
-                          type="button"
-                          onClick={() => void increment(product.id, option)}
-                          disabled={!available || overLimit}
-                          aria-label={`הוסף ${label}`}
-                          className="rounded p-2.5 text-brand-text outline-none transition-colors hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:opacity-40 sm:p-1.5"
-                        >
-                          <Plus size={16} />
-                        </button>
-                        <span className="min-w-[1.5rem] text-center text-sm font-medium text-brand-text">
-                          {quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => decrement(product.id, option)}
-                          aria-label={`הפחת ${label}`}
-                          className="rounded p-2.5 text-brand-text outline-none transition-colors hover:text-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold sm:p-1.5"
-                        >
-                          <Minus size={16} />
-                        </button>
-                      </div>
-                      <span className={`font-semibold ${available ? "text-brand-gold" : "text-brand-text-muted"}`}>
-                        ₪{formatPrice(line.lineTotalCents)}
-                      </span>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
+            {lines.map((line) => (
+              <CartLineRow
+                key={line.key}
+                line={line}
+                onIncrement={() => void increment(line.product.id, line.option)}
+                onDecrement={() => decrement(line.product.id, line.option)}
+                onRemove={() => removeLine(line.product.id, line.option)}
+              />
+            ))}
           </ul>
 
           <div className="border-t border-brand-border px-4 py-4">
@@ -144,13 +65,13 @@ export function CartDrawer() {
               <span className="font-bold text-brand-gold">₪{formatPrice(totalPriceCents)}</span>
             </div>
 
-            <Button variant="primary" size="lg" className="w-full" onClick={handleCheckoutClick}>
+            <Button variant="primary" size="lg" className="w-full" disabled={belowMinimum} onClick={handleCheckoutClick}>
               מעבר לתשלום
             </Button>
 
-            {showCheckoutMessage && (
-              <p role="status" className="mt-2.5 text-center text-xs text-brand-text-muted">
-                בקרוב תתאפשר רכישה מקוונת. בינתיים ניתן לרכוש טלפונית או בחנות.
+            {belowMinimum && (
+              <p role="status" className="mt-2.5 text-center text-xs text-brand-danger">
+                נדרשים עוד ₪{formatPrice(remainingForMinCents)} להשלמת מינימום ההזמנה
               </p>
             )}
           </div>

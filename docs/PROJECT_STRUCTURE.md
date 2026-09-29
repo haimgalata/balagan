@@ -19,22 +19,30 @@ balagan/
 
 There's no server to put in a `backend/` folder — Supabase (a hosted Postgres + Auth + Storage service) *is* the backend, and it already lives in its own top-level folder (`supabase/`). The build is a single static SPA (`vite build` → `dist/`); nothing runs server-side except Supabase itself. Splitting `src/` into a same-level `frontend/` folder would just add a layer of indirection around the one thing (`src/`) that was always frontend.
 
-The boundary that actually needed to be made explicit was **inside** `src/`: the customer storefront vs. the privileged admin app vs. the couple of primitives both share. That's what `src/storefront/`, `src/admin/`, `src/shared/` now do.
+The boundary that actually needed to be made explicit was **inside** `src/`: the customer storefront vs. the `/checkout` app vs. the privileged admin app vs. the couple of primitives shared between storefront and admin. That's what `src/storefront/`, `src/checkout/`, `src/admin/`, `src/shared/` now do.
 
 ## `src/` — the frontend
 
 ```
 src/
-├── main.tsx, App.tsx, index.css, vite-env.d.ts   bootstrap — picks storefront or admin by pathname
-├── styles/theme.css                              global theme (CSS vars), used by both apps' Tailwind classes
+├── main.tsx, App.tsx, index.css, vite-env.d.ts   bootstrap — picks storefront, checkout, or admin by pathname
+├── styles/theme.css                              global theme (CSS vars), used by all three apps' Tailwind classes
 ├── storefront/       customer-facing app (default at "/")
-│   ├── components/   presentational UI (Header, Hero, ProductCard, CartDrawer, ...)
+│   ├── components/   presentational UI (Header, Hero, ProductCard, CartDrawer, CartLineRow, ...)
 │   ├── context/      CatalogContext, CartContext, BusinessSettingsContext
 │   ├── hooks/        useStoreStatus, useOrderStatus, useLocalStorage, ...
 │   ├── lib/          catalogApi, pricing, cartStorage, scheduleStatus, stockApi — the storefront's Supabase boundary (plain `fetch`, no supabase-js)
 │   ├── pages/        HomePage
 │   ├── types/        Product, ProductOption, CartItem, ...
 │   └── data/         fallbackCatalog.ts / fallbackBusinessSettings.ts — generated offline fallbacks, used at runtime
+├── checkout/         the /checkout app, loaded on demand via a dynamic import in main.tsx
+│   ├── checkoutRoute.ts            pure path check — the only checkout code in the customer bundle
+│   ├── CheckoutApp.tsx              wraps storefront's Catalog/BusinessSettings/Cart providers
+│   ├── CheckoutPage.tsx, OrderSummary.tsx, DetailsForm.tsx, StreetField.tsx
+│   ├── useCheckoutValidation.ts     re-validates cart/prices/stock at mount, tab refocus, and pre-submit
+│   ├── lib/ordersApi.ts             create_order()/get_order_status() — plain fetch, no supabase-js
+│   ├── lib/idempotency.ts           one id per checkout attempt, survives a refresh via sessionStorage
+│   └── data/netivotStreets.ts       static street list — delivery is Netivot-only (source noted in the file)
 ├── admin/            the private /admin app, loaded on demand via a dynamic import in main.tsx
 │   ├── categories/, products/, settings/   one vertical per admin screen (Page + API + validation/errors + hooks)
 │   └── shared/apiError.ts                  the only thing shared between the three admin verticals
@@ -42,20 +50,20 @@ src/
     └── ui/           Button.tsx, Drawer.tsx — the ONLY code shared between storefront and admin
 ```
 
-**Why this split:** `src/admin/` was already a near-standalone subtree before this reorganization — it has zero relative imports and depends on the rest of `src/` only through `Button`/`Drawer`. Moving the storefront's own components/context/hooks/lib/pages/types under `src/storefront/` makes that same isolation visible in the folder layout, and gives every future customer-facing or admin-facing feature an obvious, symmetric home.
+**Why this split:** `src/admin/` was already a near-standalone subtree before this reorganization — it has zero relative imports and depends on the rest of `src/` only through `Button`/`Drawer`. Moving the storefront's own components/context/hooks/lib/pages/types under `src/storefront/` makes that same isolation visible in the folder layout, and gives every future customer-facing or admin-facing feature an obvious, symmetric home. `src/checkout/` is **not** isolated the same way admin is — it deliberately reuses `src/storefront/`'s context/lib/components (`CartContext`, `CatalogContext`, `pricing.ts`, `stockApi.ts`, `CartLineRow.tsx`) so it always sees the exact same cart/catalog state as the homepage; it gets its own top-level folder (rather than living inside `src/storefront/`) because, like admin, it's a separate on-demand entry point reached by pathname, not part of the single-page/hash-anchor storefront.
 
-**The customer/admin bundle split is real, not just organizational**: `src/admin/adminRoute.ts` is the only admin file in the customer bundle (a plain path check). Everything else under `src/admin/` — including `@supabase/supabase-js` itself — ships only in a separate, lazily-loaded chunk. `tests/admin/auth/bundle.unit.spec.ts` builds the app for real and asserts this on every run.
+**The bundle split is real, not just organizational**: `src/admin/adminRoute.ts` and `src/checkout/checkoutRoute.ts` are the only admin/checkout files in the customer bundle (plain path checks). Everything else under `src/admin/` — including `@supabase/supabase-js` itself — and everything under `src/checkout/` ships only in its own separate, lazily-loaded chunk. `tests/admin/auth/bundle.unit.spec.ts` builds the app for real and asserts this for admin on every run.
 
 ## `supabase/` — the backend
 
 ```
 supabase/
-├── migrations/0001_*.sql … 0008_*.sql   schema, RLS + is_admin(), storage bucket, public RPCs, admin support, stock, business settings
+├── migrations/0001_*.sql … 0009_*.sql   schema, RLS + is_admin(), storage bucket, public RPCs, admin support, stock, business settings, orders
 ├── seed.sql                              generated — loads seed-data/ into a fresh database
 └── README.md                             apply/verify instructions
 ```
 
-This is the actual backend: table definitions, Row Level Security policies, and the whitelisted RPCs (`get_storefront_catalog()`, `get_business_settings()`, `check_stock_availability()`) that are the *only* way the frontend ever touches data. Anonymous visitors have no table access at all — everything goes through an RPC with an explicit column whitelist. The admin app has real table access, but only because `is_admin()` grants it after RLS checks pass.
+This is the actual backend: table definitions, Row Level Security policies, and the whitelisted RPCs (`get_storefront_catalog()`, `get_business_settings()`, `check_stock_availability()`, `create_order()`, `get_order_status()`) that are the *only* way the frontend ever touches data. Anonymous visitors have no table access at all — everything goes through an RPC with an explicit column whitelist. The admin app has real table access, but only because `is_admin()` grants it after RLS checks pass. `confirm_payment()` is a step further: granted only to `service_role`, not reachable by `anon`/`authenticated` at all — a future webhook-only trust tier (see `supabase/README.md`'s "Orders" section).
 
 ## Shared / config / infrastructure
 
@@ -76,6 +84,7 @@ tests/
 ├── baseline/        frozen pre-migration snapshots (fixtures, not specs)
 ├── catalog/          storefront catalog: loading, caching, parity, visual regression
 ├── cart/              cart model, pricing, stock-limit UI
+├── checkout/          /checkout route check (unit) — validation/details-form coverage grows with the feature
 └── admin/
     ├── auth/          login, session, idle logout, bundle-isolation guard
     ├── categories/    admin Categories screen
@@ -89,10 +98,10 @@ tests/
 
 | System | Frontend | Backend |
 |---|---|---|
-| **Orders** | Customer checkout/history in `src/storefront/` (near `CartDrawer.tsx`); admin order management in a new `src/admin/orders/` | New `supabase/migrations/0009_orders.sql` + RPCs |
-| **Customers/users** | Real accounts extend `src/storefront/` (near `AccountDrawer.tsx`) | Supabase Auth changes for customer accounts (separate from admin auth) |
+| **Orders** | Cart → checkout → real order (cash) all live in `src/checkout/`, done. Still to build: order *history* for customers in `src/storefront/` (near `AccountDrawer.tsx`, once customer auth exists — the RLS policy is already in place); admin order management in a new `src/admin/orders/` | `supabase/migrations/0009_orders.sql` (`orders`/`order_items`/`payment_attempts`/`payment_events`, `create_order()`/`get_order_status()`/`confirm_payment()`), done. Still to build: a webhook Edge Function calling `confirm_payment()` once a payment provider is chosen |
+| **Customers/users** | Real accounts extend `src/storefront/` (near `AccountDrawer.tsx`) | Supabase Auth changes for customer accounts (separate from admin auth) — `orders.customer_id`/RLS already reference `auth.users` (0009), unused until this exists |
 | **Deliveries** | Admin-side in a new `src/admin/deliveries/`; customer-facing status in `src/storefront/` | Extends the orders schema/RPCs |
-| **Payments** | Not yet decided — this static-SPA-plus-Supabase setup has no safe place to run payment/webhook logic today (likely a Supabase Edge Function or a real server later) | — |
+| **Payments** | No provider chosen yet. The schema is ready for one (`payment_attempts`/`payment_events`, `payment_method: 'card'` support in `create_order()`), and the plan is a Supabase Edge Function: one to prepare/redirect to the provider, one signature-verified webhook calling `confirm_payment()` (granted only to `service_role` — never reachable from the browser) | Extends `supabase/migrations/0009_orders.sql` — no `orders`/`order_items` schema change expected |
 | **Inventory** | Extends the existing shared-stock model in `src/admin/products/` | Extends `stock_base_units` / `check_stock_availability()` |
 | **Admin/employee management** | New `src/admin/employees/` vertical | Extends the `admin_users` allow-list |
 | **Production deployment** | Root-level host config (`netlify.toml` / `vercel.json` / etc. — see `CLAUDE.md`) | — |

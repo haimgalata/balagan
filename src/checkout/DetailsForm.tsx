@@ -1,0 +1,312 @@
+import { useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
+import { Loader2, Lock } from "lucide-react";
+import { Button } from "@/shared/ui/Button";
+import { StreetField } from "@/checkout/StreetField";
+import { NETIVOT_CITY_NAME, NETIVOT_STREETS } from "@/checkout/data/netivotStreets";
+import type { PaymentMethod } from "@/checkout/lib/ordersApi";
+
+export interface CustomerDetails {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  /** Optional — for future order confirmations/receipts only. */
+  email: string;
+  /** Always `NETIVOT_CITY_NAME`: delivery is Netivot-only and this isn't user-editable. */
+  city: string;
+  street: string;
+  houseNumber: string;
+  entrance: string;
+  floor: string;
+  apartment: string;
+  intercomCode: string;
+  notes: string;
+  ageConfirmed: boolean;
+  termsAccepted: boolean;
+  /** Always "cash" today — card is shown but disabled until a payment provider is chosen. */
+  paymentMethod: PaymentMethod;
+}
+
+interface DetailsFormProps {
+  /** True while a blocking validation issue (or a below-minimum total) means submitting can't proceed yet. */
+  disabled: boolean;
+  /** True while the pre-submit revalidation triggered by this form is in flight. */
+  busy: boolean;
+  onSubmit: (details: CustomerDetails) => void;
+}
+
+type FieldErrors = Partial<
+  Record<"firstName" | "lastName" | "phone" | "email" | "street" | "houseNumber" | "ageConfirmed" | "termsAccepted", string>
+>;
+
+const inputClasses =
+  "w-full rounded-lg border border-brand-border bg-brand-bg px-3 py-2.5 text-base text-brand-text placeholder:text-brand-text-muted outline-none transition-colors focus-visible:border-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold";
+
+/** Accepts Israeli landlines (9 digits) and mobiles (10 digits), any of the usual separators. */
+function isValidIsraeliPhone(raw: string): boolean {
+  const digits = raw.replace(/\D/g, "");
+  return /^0\d{8,9}$/.test(digits);
+}
+
+function isValidEmail(raw: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw.trim());
+}
+
+function Field({
+  label,
+  id,
+  value,
+  onChange,
+  error,
+  ...rest
+}: { label: string; id: string; value: string; onChange: (value: string) => void; error?: string } & Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  "id" | "value" | "onChange"
+>) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium text-brand-text">
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-invalid={error ? true : undefined}
+        className={inputClasses}
+        {...rest}
+      />
+      {error && (
+        <p role="alert" className="text-xs text-brand-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ConfirmCheckbox({
+  id,
+  checked,
+  onChange,
+  error,
+  children,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  error?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="flex items-start gap-3 text-sm text-brand-text">
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          aria-invalid={error ? true : undefined}
+          className="mt-0.5 h-5 w-5 shrink-0 accent-[rgb(var(--color-gold))]"
+        />
+        <span>{children}</span>
+      </label>
+      {error && (
+        <p role="alert" className="text-xs text-brand-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Customer + delivery-address details. Client-side validation only — submitting does not persist an order
+ * yet (there is no order-processing backend); the parent shows a "coming soon" state once this and one
+ * final revalidation pass both succeed.
+ *
+ * Delivery is Netivot-only today: the city is fixed (not an editable field) and the street is restricted
+ * to `NETIVOT_STREETS` (see `data/netivotStreets.ts`) via `StreetField`'s autocomplete — free text that
+ * doesn't match an entry in that list is rejected on submit, same as any other required field.
+ */
+export function DetailsForm({ disabled, busy, onSubmit }: DetailsFormProps) {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [street, setStreet] = useState("");
+  const [houseNumber, setHouseNumber] = useState("");
+  const [entrance, setEntrance] = useState("");
+  const [floor, setFloor] = useState("");
+  const [apartment, setApartment] = useState("");
+  const [intercomCode, setIntercomCode] = useState("");
+  const [notes, setNotes] = useState("");
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  // Card isn't wired to a payment provider yet (see CLAUDE.md) — cash is the only real choice today.
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [errors, setErrors] = useState<FieldErrors>({});
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (disabled || busy) return;
+
+    const nextErrors: FieldErrors = {};
+    if (firstName.trim() === "") nextErrors.firstName = "נא להזין שם פרטי";
+    if (lastName.trim() === "") nextErrors.lastName = "נא להזין שם משפחה";
+    if (!isValidIsraeliPhone(phone)) nextErrors.phone = "נא להזין מספר טלפון תקין";
+    if (email.trim() !== "" && !isValidEmail(email)) nextErrors.email = "נא להזין כתובת אימייל תקינה";
+    if (!NETIVOT_STREETS.includes(street.trim())) nextErrors.street = "נא לבחור רחוב מהרשימה המוצעת";
+    if (houseNumber.trim() === "") nextErrors.houseNumber = "נא להזין מספר בית";
+    if (!ageConfirmed) nextErrors.ageConfirmed = "יש לאשר את הצהרת הגיל כדי להמשיך";
+    if (!termsAccepted) nextErrors.termsAccepted = "יש לאשר את התקנון כדי להמשיך";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    onSubmit({
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      city: NETIVOT_CITY_NAME,
+      street: street.trim(),
+      houseNumber: houseNumber.trim(),
+      entrance: entrance.trim(),
+      floor: floor.trim(),
+      apartment: apartment.trim(),
+      intercomCode: intercomCode.trim(),
+      notes: notes.trim(),
+      ageConfirmed,
+      termsAccepted,
+      paymentMethod,
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-6 rounded-2xl border border-brand-border bg-brand-bg-elevated p-4 sm:p-6">
+      <fieldset className="flex flex-col gap-4">
+        <legend className="mb-1 text-sm font-semibold text-brand-text">פרטים אישיים</legend>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="שם פרטי" id="checkout-first-name" value={firstName} onChange={setFirstName} error={errors.firstName} autoComplete="given-name" />
+          <Field label="שם משפחה" id="checkout-last-name" value={lastName} onChange={setLastName} error={errors.lastName} autoComplete="family-name" />
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            label="טלפון"
+            id="checkout-phone"
+            value={phone}
+            onChange={setPhone}
+            error={errors.phone}
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            autoComplete="tel"
+          />
+          <Field
+            label="אימייל (אופציונלי)"
+            id="checkout-email"
+            value={email}
+            onChange={setEmail}
+            error={errors.email}
+            type="email"
+            inputMode="email"
+            dir="ltr"
+            autoComplete="email"
+            placeholder="לשליחת אישור הזמנה"
+          />
+        </div>
+      </fieldset>
+
+      <fieldset className="flex flex-col gap-4">
+        <legend className="mb-1 text-sm font-semibold text-brand-text">כתובת למשלוח</legend>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-brand-text">עיר</span>
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-brand-border bg-brand-bg px-3 py-2.5 text-base text-brand-text">
+            <span>{NETIVOT_CITY_NAME}</span>
+            <span className="flex items-center gap-1 text-xs text-brand-text-muted">
+              <Lock size={13} aria-hidden="true" />
+              משלוח זמין רק בעיר זו
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="sm:col-span-2">
+            <StreetField id="checkout-street" label="רחוב" value={street} onChange={setStreet} error={errors.street} streets={NETIVOT_STREETS} />
+          </div>
+          <Field label="מספר בית" id="checkout-house-number" value={houseNumber} onChange={setHouseNumber} error={errors.houseNumber} />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-brand-text-muted">פרטי גישה נוספים (אופציונלי)</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Field label="כניסה" id="checkout-entrance" value={entrance} onChange={setEntrance} />
+            <Field label="קומה" id="checkout-floor" value={floor} onChange={setFloor} />
+            <Field label="דירה" id="checkout-apartment" value={apartment} onChange={setApartment} />
+            <Field label="קוד כניסה / אינטרקום" id="checkout-intercom" value={intercomCode} onChange={setIntercomCode} />
+          </div>
+        </div>
+      </fieldset>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="checkout-notes" className="text-sm font-medium text-brand-text">
+          הערות למשלוח (אופציונלי)
+        </label>
+        <textarea id="checkout-notes" value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} className={inputClasses} />
+      </div>
+
+      <fieldset className="flex flex-col gap-3">
+        <legend className="mb-1 text-sm font-semibold text-brand-text">אופן תשלום</legend>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setPaymentMethod("cash")}
+            aria-pressed={paymentMethod === "cash"}
+            className={`rounded-lg border p-3 text-sm font-medium transition-colors ${
+              paymentMethod === "cash"
+                ? "border-brand-gold bg-brand-gold/10 text-brand-gold"
+                : "border-brand-border text-brand-text hover:border-brand-border-strong"
+            }`}
+          >
+            מזומן במסירה
+          </button>
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            className="cursor-not-allowed rounded-lg border border-brand-border p-3 text-sm font-medium text-brand-text-muted opacity-60"
+          >
+            כרטיס אשראי
+            <span className="block text-xs">בקרוב</span>
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset className="flex flex-col gap-3">
+        <legend className="mb-1 text-sm font-semibold text-brand-text">אישורים נדרשים</legend>
+
+        <ConfirmCheckbox id="checkout-age-confirm" checked={ageConfirmed} onChange={setAgeConfirmed} error={errors.ageConfirmed}>
+          אני מאשר/ת כי מקבל/ת המשלוח הינו/ה בן/בת 18 ומעלה, וכי מסירת מוצרים המוגבלים לפי גיל תתבצע אך ורק בהצגת
+          תעודה מזהה המעידה על גיל 18 ומעלה במעמד המסירה — אם לא תוצג תעודה מתאימה, המשלוח לא יימסר.
+        </ConfirmCheckbox>
+
+        {/* The terms/ordering-and-delivery page doesn't exist yet (see CLAUDE.md) — once it does, wrap the
+            phrase below in a real <a href="..."> to it instead of this styled span. */}
+        <ConfirmCheckbox id="checkout-terms-accept" checked={termsAccepted} onChange={setTermsAccepted} error={errors.termsAccepted}>
+          קראתי ואני מסכימ/ה ל<span className="text-brand-gold underline underline-offset-2">תקנון האתר ותנאי ההזמנה והמשלוח</span>.
+        </ConfirmCheckbox>
+      </fieldset>
+
+      <Button type="submit" size="lg" disabled={disabled || busy} className="w-full">
+        {busy ? (
+          <>
+            <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+            בודקים זמינות…
+          </>
+        ) : (
+          "לסיום ההזמנה"
+        )}
+      </Button>
+    </form>
+  );
+}

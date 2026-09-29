@@ -73,6 +73,14 @@ interface CartContextValue {
   increment: (productId: string, option: PurchaseOption) => Promise<void>;
   decrement: (productId: string, option: PurchaseOption) => void;
   removeLine: (productId: string, option: PurchaseOption) => void;
+  /** Empties the cart outright — used once a real order has actually been created from it. */
+  clearCart: () => void;
+  /**
+   * Re-checks every distinct product currently in the cart against its current shared stock (see
+   * `revalidateCart` below) and returns once that pass has settled. `openCart` already fires this in the
+   * background; checkout calls it directly (without opening the drawer) as part of its own validation.
+   */
+  revalidateCart: () => Promise<void>;
   /** Most recent toast (added / blocked), or null once dismissed/expired. */
   toast: CartToast | null;
   dismissToast: () => void;
@@ -213,10 +221,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
   };
 
   /** Re-checks every distinct product currently in the cart — catches stock that dropped after the customer
-   * already added items. Runs in the background; opening the cart never waits on it. */
-  const revalidateCart = (): void => {
+   * already added items. `openCart` fires this in the background and never waits on it; checkout awaits it. */
+  const revalidateCart = async (): Promise<void> => {
     const productIds = [...new Set(itemsRef.current.map((item) => item.productId))];
-    void Promise.all(productIds.map((id) => revalidateProduct(id)));
+    await Promise.all(productIds.map((id) => revalidateProduct(id)));
   };
 
   const decrement = (productId: string, option: PurchaseOption) => {
@@ -232,6 +240,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     commit(next);
     if (overLimitProducts.has(productId)) void revalidateProduct(productId);
   };
+
+  const clearCart = () => commit([]);
 
   const lines: CartLine[] = useMemo(
     () =>
@@ -274,13 +284,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     isOpen,
     openCart: () => {
       setIsOpen(true);
-      revalidateCart();
+      void revalidateCart();
     },
     closeCart: () => setIsOpen(false),
     addItem,
     increment,
     decrement,
     removeLine,
+    clearCart,
+    revalidateCart,
     toast,
     dismissToast,
   };

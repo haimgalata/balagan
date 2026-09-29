@@ -15,6 +15,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0006_admin_products.sql` | Admin Products support: shared inventory (`stock_base_units`), `admin_reorder_products()` | yes, after first success |
 | `migrations/0007_stock_availability.sql` | `check_stock_availability()` — the cart's shared-stock quantity check | yes |
 | `migrations/0008_business_settings.sql` | `business_hours` (physical-store + online-order weekly schedules), `business_settings` (min order / delivery fee / manual pause), `get_business_settings()` | yes |
+| `migrations/0009_orders.sql` | `orders`/`order_items`/`payment_attempts`/`payment_events`, stock reservation (`products.stock_reserved_units`), `create_order()`, `get_order_status()`, `confirm_payment()` | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
@@ -195,6 +196,59 @@ time inputs (disabled while closed). **הזמנות אונליין** — the onl
 click-to-expand weekly-hours panel; the site's existing info banner becomes specifically the online-orders banner
 (green when orders are open, red when closed or paused), no longer conflating "is the shop open" with "are we taking
 online orders."
+
+## Orders — apply migration 0009 first
+
+`/checkout` needs one more migration before "לסיום ההזמנה" creates a real order. **SQL Editor → New query →
+paste `migrations/0009_orders.sql` → Run** ("Success. No rows returned"; it is re-runnable).
+
+It adds four tables, a new `products` column, and three RPCs:
+- `orders` / `order_items` — one guest-or-customer order (`customer_id` is null for a guest; it references
+  `auth.users` for when real customer accounts exist, exactly like `admin_users.user_id` already does) with
+  its own immutable snapshot of the customer/delivery details and per-line product/price snapshots — a
+  later product rename/reprice/delete, or a customer's own future profile edit, never changes a historical
+  order. `order_status` (fulfillment) and `payment_status` (money) are separate on purpose: a cash order is
+  `confirmed` immediately with `payment_status='pending'` (collected on delivery); a card order starts
+  `pending`/`pending` and only becomes `confirmed`/`paid` once `confirm_payment()` says so.
+- `payment_attempts` / `payment_events` — CARD only (nothing is written to either for a cash order). One
+  attempt row per try at paying a given order (supports retrying after a decline without a second order);
+  `payment_events` is an append-only webhook log, unique on the provider's own event id, which is what makes
+  a redelivered webhook harmless instead of double-processing a payment.
+- `products.stock_reserved_units` — "available to promise" becomes `stock_base_units - stock_reserved_units`.
+  `check_stock_availability()` and the `unit_in_stock`/`package_in_stock` generated columns are updated to
+  account for it. The actual concurrency guard is a single conditional `UPDATE ... WHERE stock_base_units -
+  stock_reserved_units >= n` inside `create_order()` — never a read-then-write — so two customers racing for
+  the last unit are serialized by Postgres's own row lock on that statement, not by application code.
+- `create_order(p_payload, p_idempotency_key)` — the only way an order gets created; same anon-callable
+  `SECURITY DEFINER` trust tier as `check_stock_availability()`/`get_storefront_catalog()`. Re-validates
+  prices, stock, the minimum order, and required fields itself — never trusts the client beyond product
+  ids/options/quantities and the free-text delivery fields. A repeat call with the same idempotency key
+  returns the already-created order instead of making a second one (covers double-click, a refresh, or a
+  retried request after a network timeout).
+- `get_order_status(p_order_id)` — a narrow, anon-callable, status-only read (no PII) for a future
+  payment-provider return page; the order's own UUID is the capability token, since a guest has no other
+  credential. Also lazily expires a stale card reservation the moment anything asks about it.
+- `confirm_payment(...)` — granted **only to `service_role`**, not `anon`/`authenticated`. This is a new
+  trust tier beyond anon/authenticated+`is_admin()`: it must be reachable only from a future server-side
+  webhook handler (a Supabase Edge Function using the service-role key, never the browser). Not wired to a
+  real payment provider yet — the function exists and is correct, there's simply nothing calling it today.
+
+**Only cash is real today.** The details form collects a payment method, but "כרטיס אשראי" is shown
+disabled ("בקרוב") until a provider is actually chosen and integrated — `create_order()` fully supports
+`payment_method: 'card'` (reserves stock, creates a `payment_attempts` row) so no schema work is needed
+later, it's just not reachable from the UI yet.
+
+No `security-test.mjs` section exists for 0009 yet (unlike every earlier migration) — extending it needs a
+live project to verify against, which wasn't available while writing this migration. Instead, `create_order`/
+`get_order_status`/`release_expired_order`/`confirm_payment` were exercised against a real Postgres engine
+(PGlite/WASM) with 29 checks: the cash happy path (stock permanently deducted, order confirmed), idempotent
+retries (no duplicate order), a fully-exhausted option refused, the atomic reservation UPDATE specifically
+refusing a proposed total beyond what's available (the actual concurrency guard, isolated from the "is this
+in stock at all" check), package sale-price snapshots, the minimum-order/age/terms/city guards, lazy
+reservation expiry, `confirm_payment` succeeded/failed paths (including a duplicate webhook event being a
+no-op), and stock correctly staying untouched on every refusal. Extending `security-test.mjs` for 0009
+(anon table-access denial, RLS on the new tables, the `service_role`-only grant on `confirm_payment`) is a
+good next step before this ships to a real project.
 
 ## Design notes worth knowing
 

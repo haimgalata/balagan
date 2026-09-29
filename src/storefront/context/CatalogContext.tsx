@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Product } from "@/storefront/types";
 import { fallbackCatalog } from "@/storefront/data/fallbackCatalog";
 import { fetchCatalog, getCatalogConfig, parseRpcCatalog, type RpcCatalog } from "@/storefront/lib/catalogApi";
@@ -20,6 +20,13 @@ interface CatalogState extends MappedCatalog {
 interface CatalogContextValue extends CatalogState {
   /** Products of a category slug, in storefront display order. */
   getProductsByCategory: (categorySlug: string) => Product[];
+  /**
+   * Forces a fresh fetch from the database, bypassing the stale-while-revalidate cache, and updates state
+   * immediately if the result differs from what's shown. Used by checkout to make sure prices/availability
+   * are current right before the customer submits their details — see `src/checkout/useCheckoutValidation.ts`.
+   * A no-op that resolves `true` in static mode (nothing to refresh); resolves `false` on network/shape failure.
+   */
+  refresh: () => Promise<boolean>;
 }
 
 const CatalogContext = createContext<CatalogContextValue | undefined>(undefined);
@@ -104,6 +111,23 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const refresh = useCallback(async (): Promise<boolean> => {
+    if (config.source !== "supabase") return true; // static/offline mode has nothing to refresh
+    try {
+      const live = await fetchCatalog(config);
+      writeCache(live);
+      const json = JSON.stringify(live);
+      if (json !== shownJson.current) {
+        shownJson.current = json;
+        setState({ status: "ready", origin: "live", ...mapCatalog(live, config.supabaseUrl) });
+      }
+      return true;
+    } catch (error) {
+      console.warn("[catalog] on-demand refresh failed:", error);
+      return false;
+    }
+  }, []);
+
   const value = useMemo<CatalogContextValue>(() => {
     const byCategory = new Map<string, Product[]>();
     for (const product of state.products) {
@@ -111,8 +135,8 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       if (list) list.push(product);
       else byCategory.set(product.category, [product]);
     }
-    return { ...state, getProductsByCategory: (slug: string) => byCategory.get(slug) ?? [] };
-  }, [state]);
+    return { ...state, getProductsByCategory: (slug: string) => byCategory.get(slug) ?? [], refresh };
+  }, [state, refresh]);
 
   return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;
 }

@@ -24,8 +24,12 @@
 -- ---------- admin allow-list -------------------------------------------------
 create table if not exists public.admin_users (
   user_id     uuid primary key references auth.users (id) on delete cascade,
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  -- 'owner' = full admin (this is what is_admin() means); 'staff' = order handling only (0010).
+  role        text not null default 'owner' check (role in ('owner', 'staff'))
 );
+-- (for a project that already had the table before 'role' existed; 0010 adds the same column)
+alter table public.admin_users add column if not exists role text not null default 'owner';
 
 -- Add the (single) admin manually, in the SQL editor, after creating the user in
 -- Authentication -> Users. There is deliberately NO client-side way to write here:
@@ -49,6 +53,7 @@ as $$
     select 1
     from public.admin_users au
     where au.user_id = (select auth.uid())
+      and au.role = 'owner'
     -- and coalesce((select auth.jwt()) ->> 'aal', '') = 'aal2'
   );
 $$;

@@ -82,7 +82,7 @@ export function createFakeDatabase() {
     if (!table && !rpc) return false;
 
     if (rpc === "get_business_settings") { await json(200, rpcOutput()); return true; }
-    if (rpc === "is_admin") return false; // the base stub answers it
+    if (rpc === "is_admin" || rpc === "get_my_role") return false; // the base stub answers it
     if (rpc) return false;
 
     if (failAll) { await json(failAll.status, failAll.body ?? { message: "boom" }); return true; }

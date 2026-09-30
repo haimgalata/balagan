@@ -79,6 +79,6 @@ export default function AdminApp() {
       return <AdminLogin notice={state.notice} onSignIn={signIn} />;
 
     case "admin":
-      return client ? <AdminShell email={state.email} client={client} onSignOut={() => void signOut()} /> : null;
+      return client ? <AdminShell email={state.email} role={state.role} client={client} onSignOut={() => void signOut()} /> : null;
   }
 }

@@ -44,7 +44,7 @@ src/
 │   ├── lib/idempotency.ts           one id per checkout attempt, survives a refresh via sessionStorage
 │   └── data/netivotStreets.ts       static street list — delivery is Netivot-only (source noted in the file)
 ├── admin/            the private /admin app, loaded on demand via a dynamic import in main.tsx
-│   ├── categories/, products/, settings/   one vertical per admin screen (Page + API + validation/errors + hooks)
+│   ├── categories/, products/, settings/, orders/   one vertical per admin screen (Page + API + validation/errors + hooks)
 │   └── shared/apiError.ts                  the only thing shared between the three admin verticals
 └── shared/
     └── ui/           Button.tsx, Drawer.tsx — the ONLY code shared between storefront and admin
@@ -89,7 +89,8 @@ tests/
     ├── auth/          login, session, idle logout, bundle-isolation guard
     ├── categories/    admin Categories screen
     ├── products/      admin Products screen + shared inventory
-    └── settings/      admin Business Settings screen
+    ├── settings/      admin Business Settings screen
+    └── orders/        order management: pure model/route/error unit tests + the board/history/actions browser tests (fake orders database)
 ```
 
 `*.unit.spec.ts` files run via `npm run test:unit` (pure logic, no browser); everything else runs via `npm run test:e2e` (Playwright + Chrome). `*-live.spec.ts` files are optional and only run when `LIVE_SUPABASE_URL`/`LIVE_*` credentials are set.
@@ -98,12 +99,12 @@ tests/
 
 | System | Frontend | Backend |
 |---|---|---|
-| **Orders** | Cart → checkout → real order (cash) all live in `src/checkout/`, done. Still to build: order *history* for customers in `src/storefront/` (near `AccountDrawer.tsx`, once customer auth exists — the RLS policy is already in place); admin order management in a new `src/admin/orders/` | `supabase/migrations/0009_orders.sql` (`orders`/`order_items`/`payment_attempts`/`payment_events`, `create_order()`/`get_order_status()`/`confirm_payment()`), done. Still to build: a webhook Edge Function calling `confirm_payment()` once a payment provider is chosen |
+| **Orders** | Cart → checkout → real order (cash) all live in `src/checkout/`, done. Still to build: order *history* for customers in `src/storefront/` (near `AccountDrawer.tsx`, once customer auth exists — the RLS policy is already in place); admin order management — **done**, in `src/admin/orders/` (Active board, history/search, actions, alerts) | `supabase/migrations/0009_orders.sql` (`orders`/`order_items`/`payment_attempts`/`payment_events`, `create_order()`/`get_order_status()`/`confirm_payment()`), done. `supabase/migrations/0010_order_management.sql` (owner/staff roles, lifecycle, `order_status_events`, `transition_order()`/`resolve_stock_return()`), done. Still to build: a webhook Edge Function calling `confirm_payment()` once a payment provider is chosen |
 | **Customers/users** | Real accounts extend `src/storefront/` (near `AccountDrawer.tsx`) | Supabase Auth changes for customer accounts (separate from admin auth) — `orders.customer_id`/RLS already reference `auth.users` (0009), unused until this exists |
 | **Deliveries** | Admin-side in a new `src/admin/deliveries/`; customer-facing status in `src/storefront/` | Extends the orders schema/RPCs |
 | **Payments** | No provider chosen yet. The schema is ready for one (`payment_attempts`/`payment_events`, `payment_method: 'card'` support in `create_order()`), and the plan is a Supabase Edge Function: one to prepare/redirect to the provider, one signature-verified webhook calling `confirm_payment()` (granted only to `service_role` — never reachable from the browser) | Extends `supabase/migrations/0009_orders.sql` — no `orders`/`order_items` schema change expected |
 | **Inventory** | Extends the existing shared-stock model in `src/admin/products/` | Extends `stock_base_units` / `check_stock_availability()` |
-| **Admin/employee management** | New `src/admin/employees/` vertical | Extends the `admin_users` allow-list |
+| **Admin/employee management** | New `src/admin/employees/` vertical (UI to add/remove individual employee accounts — today the shared staff account is created by hand, see `supabase/README.md`) | Extends the `admin_users` allow-list (`role` column already exists, `owner`/`staff`) |
 | **Production deployment** | Root-level host config (`netlify.toml` / `vercel.json` / etc. — see `CLAUDE.md`) | — |
 
 The rule of thumb: if it's something a customer or the admin sees and interacts with, it goes under `src/storefront/` or `src/admin/` respectively, following the existing per-feature-vertical pattern (`categories/`, `products/`, `settings/`). If it's a rule the database should enforce regardless of what the frontend does, it goes in a new numbered `supabase/migrations/000N_*.sql` file.

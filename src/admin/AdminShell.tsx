@@ -6,19 +6,24 @@ import { ADMIN_ROOT, navigateAdmin, useAdminPath } from "@/admin/adminPath";
 import { CategoriesPage } from "@/admin/categories/CategoriesPage";
 import { ProductsPage } from "@/admin/products/ProductsPage";
 import { BusinessSettingsPage } from "@/admin/settings/BusinessSettingsPage";
+import { OrdersPage } from "@/admin/orders/OrdersPage";
+import { ORDERS_PATH, isOrdersPath } from "@/admin/orders/ordersRoute";
+import type { AdminRole } from "@/admin/useAdminSession";
 
 interface AdminShellProps {
   email: string;
+  role: AdminRole;
   client: SupabaseClient;
   onSignOut: () => void;
 }
 
-/** Sections of the dashboard. */
+/** Sections of the dashboard. `ownerOnly` sections are hidden from staff (the database refuses them anyway). */
 const NAV_ITEMS = [
-  { label: "ראשי", path: ADMIN_ROOT, enabled: true },
-  { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true },
-  { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true },
-  { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true },
+  { label: "ראשי", path: ADMIN_ROOT, enabled: true, ownerOnly: true },
+  { label: "הזמנות", path: ORDERS_PATH, enabled: true, ownerOnly: false },
+  { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true, ownerOnly: true },
+  { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true, ownerOnly: true },
+  { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true, ownerOnly: true },
 ] as const;
 
 const SUMMARY_TABLES = [
@@ -91,8 +96,18 @@ function NotFound() {
 }
 
 /** The signed-in admin frame: header (who is signed in + sign out), section navigation and the current page. */
-export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
+export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) {
   const path = useAdminPath();
+  const onOrders = isOrdersPath(path);
+  const navItems = NAV_ITEMS.filter((item) => role === "owner" || !item.ownerOnly);
+
+  // Staff only ever work in Orders: anywhere else in /admin sends them there. (UX — every other table and
+  // function refuses a staff session at the database regardless.)
+  const staffOutsideOrders = role === "staff" && !onOrders;
+  useEffect(() => {
+    if (staffOutsideOrders) navigateAdmin(ORDERS_PATH);
+  }, [staffOutsideOrders]);
+  if (staffOutsideOrders) return null;
 
   return (
     <div className="min-h-screen bg-brand-bg text-brand-text">
@@ -100,7 +115,7 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
         <div className="mx-auto flex max-w-container items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-baseline gap-2">
             <span className="font-display text-xl text-brand-gold">בלאגן</span>
-            <span className="text-sm font-medium text-brand-text-muted">ניהול</span>
+            <span className="text-sm font-medium text-brand-text-muted">{role === "staff" ? "הזמנות" : "ניהול"}</span>
           </div>
           <div className="flex min-w-0 items-center gap-3">
             <span dir="ltr" className="min-w-0 max-w-[9.5rem] truncate text-xs text-brand-text-muted sm:max-w-xs sm:text-sm" data-testid="admin-email">
@@ -114,18 +129,18 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
         </div>
 
         <nav aria-label="ניווט ניהול" className="mx-auto flex max-w-container gap-1 px-4 sm:px-6">
-          {NAV_ITEMS.map((item) =>
+          {navItems.map((item) =>
             item.enabled ? (
               <a
                 key={item.path}
                 href={item.path}
-                aria-current={path === item.path ? "page" : undefined}
+                aria-current={item.path === ORDERS_PATH ? (onOrders ? "page" : undefined) : path === item.path ? "page" : undefined}
                 onClick={(event) => {
                   event.preventDefault();
                   navigateAdmin(item.path);
                 }}
                 className={`border-b-2 px-3 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-gold ${
-                  path === item.path
+                  (item.path === ORDERS_PATH ? onOrders : path === item.path)
                     ? "border-brand-gold text-brand-gold"
                     : "border-transparent text-brand-text-muted hover:text-brand-text"
                 }`}
@@ -146,8 +161,10 @@ export function AdminShell({ email, client, onSignOut }: AdminShellProps) {
         </nav>
       </header>
 
-      <main className="mx-auto max-w-container px-4 py-6 sm:px-6">
-        {path === ADMIN_ROOT ? (
+      <main className={`mx-auto px-4 py-6 sm:px-6 ${onOrders ? "max-w-[112rem]" : "max-w-container"}`}>
+        {onOrders ? (
+          <OrdersPage client={client} role={role} path={path} />
+        ) : path === ADMIN_ROOT ? (
           <>
             <h1 className="mb-4 text-xl font-bold text-brand-text">סקירה</h1>
             <AdminSummary client={client} />

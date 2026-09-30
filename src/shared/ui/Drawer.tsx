@@ -11,6 +11,8 @@ interface DrawerProps {
   /** Optional id on the panel, so a trigger button elsewhere can point
    * `aria-controls` at it. */
   id?: string;
+  /** Tailwind max-width class for the panel (default: a narrow `max-w-sm` side panel). */
+  widthClassName?: string;
   children: ReactNode;
 }
 
@@ -18,7 +20,7 @@ interface DrawerProps {
  * Shared slide-in panel used by both the mobile navigation and the
  * cart drawer, so overlay/scroll-lock/close behavior lives in one place.
  */
-export function Drawer({ isOpen, onClose, title, side = "left", id, children }: DrawerProps) {
+export function Drawer({ isOpen, onClose, title, side = "left", id, widthClassName = "max-w-sm", children }: DrawerProps) {
   useEffect(() => {
     if (!isOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -58,7 +60,7 @@ export function Drawer({ isOpen, onClose, title, side = "left", id, children }: 
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`absolute inset-y-0 ${sideClasses} flex w-full max-w-sm flex-col bg-brand-bg-secondary shadow-2xl transition-transform duration-300 ${
+        className={`absolute inset-y-0 ${sideClasses} flex w-full ${widthClassName} flex-col bg-brand-bg-secondary shadow-2xl transition-transform duration-300 ${
           isOpen ? "translate-x-0" : translateClosed
         }`}
       >

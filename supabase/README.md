@@ -16,6 +16,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0007_stock_availability.sql` | `check_stock_availability()` — the cart's shared-stock quantity check | yes |
 | `migrations/0008_business_settings.sql` | `business_hours` (physical-store + online-order weekly schedules), `business_settings` (min order / delivery fee / manual pause), `get_business_settings()` | yes |
 | `migrations/0009_orders.sql` | `orders`/`order_items`/`payment_attempts`/`payment_events`, stock reservation (`products.stock_reserved_units`), `create_order()`, `get_order_status()`, `confirm_payment()` | yes |
+| `migrations/0010_order_management.sql` | owner/staff roles (`admin_users.role`, `is_staff()`, `get_my_role()`), the order lifecycle (`preparing`, `out_for_delivery`), `order_status_events` history, `transition_order()`, `resolve_stock_return()`, Realtime on `orders`, orders become read-only through the table API | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
@@ -249,6 +250,57 @@ reservation expiry, `confirm_payment` succeeded/failed paths (including a duplic
 no-op), and stock correctly staying untouched on every refusal. Extending `security-test.mjs` for 0009
 (anon table-access denial, RLS on the new tables, the `service_role`-only grant on `confirm_payment`) is a
 good next step before this ships to a real project.
+
+## Order management — apply migration 0010 first
+
+`/admin/orders` (the Active board + history) needs **SQL Editor → New query → paste `migrations/0010_order_management.sql`
+→ Run** (re-runnable). **Apply it before deploying the new admin build** — the admin app now asks `get_my_role()` after
+login, which doesn't exist until this migration runs. Your existing admin keeps working: the new `role` column defaults to
+`'owner'`.
+
+**Roles (two, enforced in Postgres — hiding menu items is only UX):**
+- `owner` — everything, exactly as before. `is_admin()` now means *owner only*, so every existing catalog/settings/payment
+  policy is unchanged and automatically refuses staff.
+- `staff` — the order terminal. Can read orders (open ones, anything whose stock is unresolved, and anything touched in the
+  last 7 days), read their history, and call `transition_order()` / `resolve_stock_return()`. Cannot touch catalog, inventory,
+  settings, payment tables or `admin_users`, cannot write off stock, cannot reopen a completed order.
+
+**Creating the shared store-terminal account** (same manual pattern as the admin; public sign-ups stay disabled):
+Authentication → Users → Add user (email + password), then in the SQL editor:
+```sql
+insert into public.admin_users (user_id, role)
+select id, 'staff' from auth.users where email = 'terminal@your-store.example';
+```
+Individual employee accounts later are the same two steps per person — every history entry already records *which*
+account acted (email + role), so nothing needs redesigning; only the login is shared today. The staff account is exempt
+from the 60-minute idle logout (it sits on the terminal all day); owners are not.
+
+**Lifecycle** (`order_status`): `confirmed` (shown as "חדשה") → `preparing` → `out_for_delivery` → `completed`; `cancelled`
+from any open state; `pending` (card awaiting payment) and `expired` are not touched by staff. Moves go through
+`transition_order(order, expected_status, to_status, reason)`: it locks the order, refuses if the order is no longer at the
+status the screen believed (`STALE_STATUS`), enforces the allowed moves and does the side effects in the same transaction:
+- one step back is allowed (staff); reopening a `completed` order is owner-only;
+- completing a **cash** order marks it `paid` (collected on delivery); reopening it puts it back to unpaid;
+- **cancel needs a reason.** Before the order leaves the store the stock is restored automatically. If it is already
+  `out_for_delivery`, `stock_return_status` becomes `pending_return` and the stock stays out of inventory until someone
+  presses "המוצרים חזרו למלאי" (`resolve_stock_return(order, 'returned')`). The owner alone can instead mark it
+  `written_off` (goods lost — adjust stock by hand). A cancelled order cannot be reopened (the customer just reorders).
+
+**History:** `order_status_events` is written by a trigger on `orders`, so `create_order()`, `confirm_payment()`, expiry and
+the new RPCs are all captured the same way, with the acting account (or `system` / `customer`). Nobody can write to it
+through the API. Orders themselves are **no longer writable through the table API by anyone** (no INSERT/UPDATE/DELETE
+for `authenticated`) — only the RPCs change them. Consequence: `scripts/security-test.mjs` can't delete its probe orders any
+more; it cancels them (off the live board, stock returned) and prints SQL to remove the rows if you want them gone.
+
+**Realtime:** the migration adds `orders` to the `supabase_realtime` publication (Realtime must be enabled for the project —
+it is by default). The board treats a Realtime event only as "reload now"; correctness comes from a query that re-runs on
+subscribe, on a 30 s timer, when the tab becomes visible and when the network returns.
+
+**Verifying:** `npm i --no-save @electric-sql/pglite && node scripts/verify-order-management.mjs` replays migrations 0001–0010
+on a real Postgres engine and checks roles, the transition map, stale/idempotent moves, restock exactly once, the
+after-dispatch stock hold, cash→paid, the history trail and the staff visibility window. Then run
+`node scripts/security-test.mjs` against your project — set `STAFF_EMAIL`/`STAFF_PASSWORD` too (a user you inserted with
+role `staff`) so the staff section runs.
 
 ## Design notes worth knowing
 

@@ -32,6 +32,7 @@
  *   $env:SUPABASE_URL="https://xxxx.supabase.co"; $env:SUPABASE_ANON_KEY="eyJ..."
  *   $env:ADMIN_EMAIL="..."; $env:ADMIN_PASSWORD="..."
  *   $env:USER_EMAIL="..."; $env:USER_PASSWORD="..."      # a normal user that is NOT in admin_users
+ *   $env:STAFF_EMAIL="..."; $env:STAFF_PASSWORD="..."    # (optional, migration 0010) a user in admin_users with role 'staff'
  *   node scripts/security-test.mjs [--check-signup]
  *
  *   --check-signup  also tries to self-register a throwaway user against
@@ -55,6 +56,7 @@ const URL_ = env("SUPABASE_URL").replace(/\/+$/, "");
 const ANON = env("SUPABASE_ANON_KEY");
 const ADMIN_EMAIL = env("ADMIN_EMAIL"), ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
 const USER_EMAIL = env("USER_EMAIL"), USER_PASSWORD = process.env.USER_PASSWORD ?? "";
+const STAFF_EMAIL = env("STAFF_EMAIL"), STAFF_PASSWORD = process.env.STAFF_PASSWORD ?? "";
 const CHECK_SIGNUP = process.argv.includes("--check-signup");
 
 if (!URL_ || !ANON || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
@@ -120,7 +122,7 @@ const PRIVATE_KEYS = /"(barcode|stock_base_units|track_stock|unit_available|pack
 /** order snapshot fields that must NEVER appear in get_order_status()'s narrow response. */
 const ORDER_PII_KEYS = /"(first_name|last_name|phone|email|street|house_number|entrance|floor|apartment|intercom_code|delivery_notes|customer_id|idempotency_key)"\s*:/;
 
-let adminToken = "", userToken = "", userId = "";
+let adminToken = "", userToken = "", userId = "", staffToken = "";
 const orderIds = []; // probe orders created during the run (order_items/payment_attempts/payment_events cascade-delete with them)
 const created = { product: false, product2: false, productOrder: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
 
@@ -129,7 +131,14 @@ async function cleanup() {
   const res = [];
   // orders first (order_items/payment_attempts/payment_events cascade with them) — deleted before the
   // products they reference, even though order_items.product_id would only be SET NULL, not blocked.
-  if (orderIds.length) res.push(["orders", (await rest("DELETE", `orders?id=in.(${orderIds.join(",")})`, { token: adminToken })).status < 300]);
+  // Since migration 0010 NOBODY can delete an order through the API (orders are history). On a project that
+  // has it, probe orders still open are CANCELLED instead (so they leave the live order board and any stock
+  // goes back); whatever remains is listed below for removal in the SQL editor.
+  if (orderIds.length) {
+    await rest("DELETE", `orders?id=in.(${orderIds.join(",")})`, { token: adminToken });
+    const open = await rest("GET", `orders?id=in.(${orderIds.join(",")})&order_status=in.(confirmed,preparing,out_for_delivery)&select=id,order_status`, { token: adminToken });
+    for (const o of open.json ?? []) await rpc("transition_order", adminToken, { p_order_id: o.id, p_expected_status: o.order_status, p_to_status: "cancelled", p_reason: "zz-security-probe cleanup" });
+  }
   if (created.image) res.push(["storage object", (await call("DELETE", `${URL_}/storage/v1/object/product-images`, { token: adminToken, body: { prefixes: [IMG] } })).status < 300]);
   res.push(["products", (await rest("DELETE", `products?id=in.(${PID},${PID_BAD},${PID2},${PID_ORDER})`, { token: adminToken })).status < 300]);
   res.push(["subcategories", (await rest("DELETE", `subcategories?id=in.(${SUB},${SUB2},${OTHER_SUB})`, { token: adminToken })).status < 300]);
@@ -138,7 +147,8 @@ async function cleanup() {
   const leftCat = await rest("GET", `categories?slug=like.zz-security-probe*&select=id`, { token: adminToken });
   const leftOrders = orderIds.length ? await rest("GET", `orders?id=in.(${orderIds.join(",")})&select=id`, { token: adminToken }) : { json: [] };
   const clean = left.json?.length === 0 && leftCat.json?.length === 0 && leftOrders.json?.length === 0;
-  console.log(`  probe rows removed: ${clean ? "yes" : "NO — remove manually:"}`);
+  const onlyOrdersLeft = left.json?.length === 0 && leftCat.json?.length === 0 && leftOrders.json?.length > 0;
+  console.log(`  probe rows removed: ${clean ? "yes" : onlyOrdersLeft ? "all except the probe ORDERS (expected since 0010: orders can't be deleted through the API — they are cancelled and off the board). Remove with:" : "NO — remove manually:"}`);
   if (!clean) {
     if (orderIds.length) console.log(`    delete from public.orders where id in (${orderIds.map((id) => `'${id}'`).join(",")});`);
     console.log("    delete from public.products where id in ('900000001','900000002','900000003','900000004');\n    delete from public.subcategories where slug like 'zz-security-probe%';\n    delete from public.categories where slug like 'zz-security-probe%';\n    (and delete the object products/900000001/probe.png from bucket product-images)");
@@ -154,6 +164,11 @@ async function main() {
     const u = await signIn(USER_EMAIL, USER_PASSWORD);
     if (u.error) { console.error(u.error); process.exit(1); }
     userToken = u.token; userId = u.userId;
+  }
+  if (STAFF_EMAIL && STAFF_PASSWORD) {
+    const st = await signIn(STAFF_EMAIL, STAFF_PASSWORD);
+    if (st.error) { console.error(st.error); process.exit(1); }
+    staffToken = st.token;
   }
 
   // ------------------------------------------------------- 0. admin sets up probes
@@ -716,6 +731,151 @@ async function main() {
       check(`${who} cannot call confirm_payment()`, isDenied(r) || r.status === 404, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
     }
     check("...and the card order's payment_attempt is untouched (still 'created')", (await rest("GET", `payment_attempts?order_id=eq.${card.json?.order_id}&select=status`, { token: adminToken })).json?.[0]?.status === "created");
+
+    // ================================================================= 5e. order management (migration 0010)
+    const probe0010 = await rpc("get_my_role", adminToken);
+    if (probe0010.status === 404 || pgCode(probe0010) === "PGRST202") {
+      skipped.push("order management (apply supabase/migrations/0010_order_management.sql, then re-run)");
+      section("Order management (0010)  --  SKIPPED: migration 0010 is not applied yet");
+    } else {
+      section("Order management — roles, audited transitions, history (migration 0010)");
+      const stockOf = async () => (await rest("GET", `products?id=eq.${PID_ORDER}&select=stock_base_units`, { token: adminToken })).json?.[0]?.stock_base_units;
+      const orderOf = async (id) => (await rest("GET", `orders?id=eq.${id}&select=order_status,payment_status,stock_return_status,cancel_reason`, { token: adminToken })).json?.[0];
+      const transition = (token, id, expected, to, reason) => rpc("transition_order", token, { p_order_id: id, p_expected_status: expected, p_to_status: to, p_reason: reason ?? null });
+      const oid = cash.json?.order_id;
+
+      check("get_my_role() is 'owner' for the admin", probe0010.status === 200 && probe0010.json === "owner", `HTTP ${probe0010.status} ${probe0010.text.slice(0, 80)}`);
+      r = await rpc("get_my_role", ANON);
+      check("anon cannot call get_my_role()", isDenied(r), `HTTP ${r.status}`);
+      if (userToken) {
+        r = await rpc("get_my_role", userToken);
+        check("a non-admin user gets no role (null)", r.status === 200 && r.json === null, `HTTP ${r.status} ${r.text.slice(0, 80)}`);
+      }
+      r = await rpc("is_admin", adminToken);
+      check("is_admin() is still true for the owner", r.status === 200 && r.json === true, `HTTP ${r.status} ${r.text.slice(0, 80)}`);
+
+      // -- orders can no longer be written through the table API by ANYONE, admin included
+      for (const [n, method, path, body] of [
+        ["UPDATE orders (status)", "PATCH", `orders?id=eq.${oid}`, { order_status: "completed" }],
+        ["UPDATE orders (cancel_reason)", "PATCH", `orders?id=eq.${oid}`, { cancel_reason: "x" }],
+        ["DELETE orders", "DELETE", `orders?id=eq.${oid}`, undefined],
+        ["INSERT order_items", "POST", "order_items", { order_id: oid, product_name_snapshot: "x", option: "unit", option_label_snapshot: "x", unit_price_cents: 1, regular_price_cents: 1, quantity: 1, base_units: 1, line_total_cents: 1 }],
+        ["DELETE order_items", "DELETE", `order_items?order_id=eq.${oid}`, undefined],
+        ["INSERT order_status_events", "POST", "order_status_events", { order_id: oid, kind: "status", to_value: "x", actor_label: "x" }],
+        ["DELETE order_status_events", "DELETE", `order_status_events?order_id=eq.${oid}`, undefined],
+      ]) { r = await rest(method, path, { token: adminToken, body }); check(`the admin cannot ${n} directly (order changes go through transition_order() only)`, isDenied(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`); }
+      check("...and the probe order is untouched", (await orderOf(oid))?.order_status === "confirmed" && (await orderOf(oid))?.cancel_reason === null);
+
+      // -- who may call the transition functions at all
+      r = await transition(ANON, oid, "confirmed", "preparing");
+      check("anon cannot call transition_order()", isDenied(r), `HTTP ${r.status}`);
+      r = await rpc("resolve_stock_return", ANON, { p_order_id: oid, p_outcome: "returned" });
+      check("anon cannot call resolve_stock_return()", isDenied(r), `HTTP ${r.status}`);
+      if (userToken) {
+        r = await transition(userToken, oid, "confirmed", "preparing");
+        check("a logged-in non-admin is refused by transition_order() (NOT_AUTHORIZED)", r.status >= 400 && /NOT_AUTHORIZED|permission denied/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        r = await rest("GET", "order_status_events?select=*", { token: userToken });
+        check("a non-admin sees no order history rows", deniedOrEmpty(r), `HTTP ${r.status}`);
+      }
+      r = await rest("GET", "order_status_events?select=*", {});
+      check("anon cannot read order_status_events", isDenied(r), `HTTP ${r.status}`);
+      check("...and the probe order is still untouched", (await orderOf(oid))?.order_status === "confirmed");
+
+      // -- the transition rules, as the owner
+      r = await transition(adminToken, oid, "preparing", "out_for_delivery");
+      check("a stale expected status is refused (STALE_STATUS: confirmed)", r.status >= 400 && /STALE_STATUS: confirmed/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await transition(adminToken, oid, "confirmed", "completed");
+      check("skipping a step is refused (INVALID_TRANSITION)", r.status >= 400 && /INVALID_TRANSITION/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await transition(adminToken, oid, "confirmed", "preparing");
+      check("confirmed -> preparing works", r.status === 200 && r.json?.order_status === "preparing" && r.json?.changed === true, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await transition(adminToken, oid, "confirmed", "preparing");
+      check("repeating the same move is an idempotent no-op", r.status === 200 && r.json?.changed === false, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await transition(adminToken, oid, "preparing", "cancelled", "  ");
+      check("cancelling without a reason is refused (REASON_REQUIRED)", r.status >= 400 && /REASON_REQUIRED/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      const stockBefore = await stockOf();
+      r = await transition(adminToken, oid, "preparing", "cancelled", "zz-security-probe: cancel before dispatch");
+      const afterCancel = await orderOf(oid);
+      check("cancel before dispatch: restored, cash payment cancelled, reason kept",
+        r.status === 200 && afterCancel?.order_status === "cancelled" && afterCancel?.stock_return_status === "restored" && afterCancel?.payment_status === "cancelled" && /before dispatch/.test(afterCancel?.cancel_reason ?? ""), `HTTP ${r.status} ${JSON.stringify(afterCancel)}`);
+      check("...and the probe product's stock came back (+1)", (await stockOf()) === stockBefore + 1, `before ${stockBefore}, after ${await stockOf()}`);
+      r = await transition(adminToken, oid, "preparing", "cancelled", "again");
+      check("a second cancel is a no-op — stock is NOT restored twice", r.status === 200 && r.json?.changed === false && (await stockOf()) === stockBefore + 1);
+      r = await transition(adminToken, oid, "cancelled", "confirmed");
+      check("a cancelled order cannot be reopened", r.status >= 400 && /INVALID_TRANSITION/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await transition(adminToken, card.json?.order_id, "pending", "preparing");
+      check("a card order still awaiting payment cannot be moved by transition_order()", r.status >= 400 && /INVALID_TRANSITION/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rpc("resolve_stock_return", adminToken, { p_order_id: oid, p_outcome: "written_off" });
+      check("resolve_stock_return() refuses an order that has nothing pending", r.status >= 400 && /STALE_STATUS/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+      // -- history: written by a trigger, readable by the owner, attributed
+      r = await rest("GET", `order_status_events?order_id=eq.${oid}&select=kind,from_value,to_value,actor_label,actor_role,reason&order=id`, { token: adminToken });
+      check("the owner reads the order's full timeline (created, status moves, payment, stock return)",
+        Array.isArray(r.json) && r.json.some((e) => e.kind === "created" && e.actor_label === "customer") && r.json.some((e) => e.kind === "status" && e.to_value === "preparing" && e.actor_role === "owner")
+        && r.json.some((e) => e.kind === "status" && e.to_value === "cancelled" && /before dispatch/.test(e.reason ?? "")) && r.json.some((e) => e.kind === "stock_return" && e.to_value === "restored"), r.text.slice(0, 200));
+
+      // -- staff (optional: needs STAFF_EMAIL / STAFF_PASSWORD, a user inserted into admin_users with role 'staff')
+      if (!staffToken) {
+        skipped.push("staff role checks (set STAFF_EMAIL / STAFF_PASSWORD: a user in admin_users with role 'staff')");
+        section("Staff role  --  SKIPPED (set STAFF_EMAIL / STAFF_PASSWORD)");
+      } else {
+        section("Staff role — order handling only");
+        r = await rpc("get_my_role", staffToken);
+        check("get_my_role() is 'staff'", r.status === 200 && r.json === "staff", `HTTP ${r.status} ${r.text.slice(0, 80)}`);
+        r = await rpc("is_admin", staffToken);
+        check("is_admin() is FALSE for staff (owner-only)", r.status === 200 && r.json === false, `HTTP ${r.status} ${r.text.slice(0, 80)}`);
+
+        for (const t of ["categories", "subcategories", "products", "business_hours", "business_settings", "payment_attempts", "payment_events"]) {
+          r = await rest("GET", `${t}?select=*&limit=1`, { token: staffToken });
+          check(`staff sees 0 rows of ${t}`, deniedOrEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        }
+        const pausedBefore = (await rest("GET", "business_settings?select=orders_paused", { token: adminToken })).json?.[0]?.orders_paused;
+        for (const [n, method, path, body] of [
+          ["UPDATE products", "PATCH", `products?id=eq.${PID_ORDER}`, { unit_price: 1 }],
+          ["UPDATE business_settings (orders_paused)", "PATCH", "business_settings?id=eq.1", { orders_paused: true }],
+          ["INSERT admin_users (self-promotion)", "POST", "admin_users", { user_id: randomUUID(), role: "owner" }],
+          ["UPDATE admin_users (self-promotion)", "PATCH", "admin_users?role=eq.staff", { role: "owner" }],
+          ["UPDATE orders directly", "PATCH", `orders?id=eq.${cash.json?.order_id}`, { order_status: "completed" }],
+          ["DELETE orders", "DELETE", `orders?id=eq.${cash.json?.order_id}`, undefined],
+        ]) { r = await rest(method, path, { token: staffToken, body }); check(`staff cannot ${n}`, deniedOrEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`); }
+        check("...and orders_paused is unchanged", (await rest("GET", "business_settings?select=orders_paused", { token: adminToken })).json?.[0]?.orders_paused === pausedBefore);
+        r = await rpc("expire_stale_orders", staffToken);
+        check("staff cannot call the owner-only expire_stale_orders()", r.status >= 400, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+        // a fresh probe order for staff to handle end to end
+        const sOrder = await createOrder(ANON, orderPayload(), randomUUID());
+        const sid = sOrder.json?.order_id;
+        if (sid) orderIds.push(sid);
+        check("(fixture) a fresh probe order for staff to handle", sOrder.status === 200 && typeof sid === "string", `HTTP ${sOrder.status} ${sOrder.text.slice(0, 100)}`);
+        r = await rest("GET", `orders?id=eq.${sid}&select=id,first_name,phone`, { token: staffToken });
+        check("staff CAN read an open order (with the delivery details they need)", r.json?.length === 1 && r.json?.[0]?.first_name === "בדיקה", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        r = await rest("GET", `order_items?order_id=eq.${sid}&select=id`, { token: staffToken });
+        check("...and its items", r.json?.length === 1, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        for (const [from, to] of [["confirmed", "preparing"], ["preparing", "out_for_delivery"]]) {
+          r = await transition(staffToken, sid, from, to);
+          check(`staff CAN move ${from} -> ${to}`, r.status === 200 && r.json?.order_status === to, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        }
+        r = await transition(staffToken, sid, "out_for_delivery", "completed");
+        check("staff CAN complete it — a cash order becomes paid", r.status === 200 && r.json?.payment_status === "paid", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        r = await transition(staffToken, sid, "completed", "out_for_delivery");
+        check("staff CANNOT reopen a completed order (owner-only)", r.status >= 400 && /INVALID_TRANSITION/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        r = await transition(adminToken, sid, "completed", "out_for_delivery");
+        check("the OWNER can reopen it; a cash order goes back to unpaid", r.status === 200 && (await orderOf(sid))?.payment_status === "pending", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        const before = await stockOf();
+        r = await transition(staffToken, sid, "out_for_delivery", "cancelled", "zz-security-probe: cancel after dispatch");
+        check("staff cancel AFTER dispatch: stock is HELD (pending_return), not restored", r.status === 200 && (await orderOf(sid))?.stock_return_status === "pending_return" && (await stockOf()) === before, `HTTP ${r.status} ${JSON.stringify(await orderOf(sid))}`);
+        r = await rest("GET", `orders?id=eq.${sid}&select=id`, { token: staffToken });
+        check("staff still see it while its stock is unresolved", r.json?.length === 1);
+        r = await rpc("resolve_stock_return", staffToken, { p_order_id: sid, p_outcome: "written_off" });
+        check("staff cannot WRITE OFF stock (owner-only)", r.status >= 400 && /NOT_AUTHORIZED|permission denied/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        check("...nothing changed", (await orderOf(sid))?.stock_return_status === "pending_return" && (await stockOf()) === before);
+        r = await rpc("resolve_stock_return", staffToken, { p_order_id: sid, p_outcome: "returned" });
+        check("staff CAN confirm the goods are back: stock restored (+1)", r.status === 200 && (await orderOf(sid))?.stock_return_status === "restored" && (await stockOf()) === before + 1, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+        r = await rpc("resolve_stock_return", staffToken, { p_order_id: sid, p_outcome: "returned" });
+        check("confirming again is a no-op (no double restock)", r.status === 200 && r.json?.changed === false && (await stockOf()) === before + 1);
+        r = await rest("GET", `order_status_events?order_id=eq.${sid}&select=actor_label,actor_role,to_value`, { token: staffToken });
+        check("staff can read the timeline, attributed to the staff account", r.json?.some((e) => e.actor_role === "staff") === true, r.text.slice(0, 200));
+      }
+    }
 
     // restore the probe category/subcategory to hidden (PID_ORDER itself is deleted entirely in cleanup)
     await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: false } });

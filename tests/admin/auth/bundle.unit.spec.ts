@@ -45,13 +45,13 @@ test("admin code is a separate on-demand chunk; the customer bundle has none of 
     const others = assets.filter((name) => name !== entryName);
 
     // markers that exist only in admin code
-    const ADMIN_ONLY = ["balagan-admin-auth", "auth/v1", "signInWithPassword", "is_admin", "noindex,nofollow", "כניסה לניהול"];
+    const ADMIN_ONLY = ["balagan-admin-auth", "auth/v1", "signInWithPassword", "get_my_role", "noindex,nofollow", "כניסה לניהול"];
     for (const marker of ADMIN_ONLY) expect(entry.includes(marker), `customer bundle must not contain "${marker}"`).toBe(false);
 
     // ...and they do exist in a separate chunk that is loaded on demand
     const adminChunk = others.map((name) => readFileSync(join(outDir, "assets", name), "utf8")).find((code) => code.includes("balagan-admin-auth"));
     expect(adminChunk, "an admin chunk exists").toBeDefined();
-    for (const marker of ["signInWithPassword", "is_admin", "כניסה לניהול"]) expect(adminChunk!.includes(marker)).toBe(true);
+    for (const marker of ["signInWithPassword", "get_my_role", "כניסה לניהול"]) expect(adminChunk!.includes(marker)).toBe(true);
     expect(entry, "the entry reaches the admin only through a dynamic import").toMatch(/import\(["'`]\.\/AdminApp-/);
 
     // customer bundle size guard

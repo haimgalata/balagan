@@ -10,7 +10,7 @@ import { ADMIN_STORAGE_KEY } from "./adminStubs";
  *   $env:LIVE_USER_EMAIL="<ordinary NON-admin user>"; $env:LIVE_USER_PASSWORD="<its password>"   # optional
  *   npx playwright test admin-live --project=live-desktop
  *
- * It only reads (login, is_admin(), three head-count queries) and signs out at the end.
+ * It only reads (login, get_my_role(), three head-count queries) and signs out at the end.
  */
 const adminEmail = (process.env.LIVE_ADMIN_EMAIL ?? "").trim();
 const adminPassword = process.env.LIVE_ADMIN_PASSWORD ?? "";

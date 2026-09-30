@@ -12,22 +12,25 @@ export type AdminSessionState =
   | { status: "signedOut"; notice: SignedOutNotice | null }
   /** Signed in, but we could not confirm admin status (e.g. no connection). The session is kept. */
   | { status: "error" }
-  | { status: "admin"; email: string };
+  | { status: "admin"; email: string; role: AdminRole };
+
+/** 'owner' = full admin; 'staff' = order handling only. Drives the screen; the database enforces it. */
+export type AdminRole = "owner" | "staff";
 
 export type SignInFailure = "invalid-credentials" | "network" | "too-many-attempts" | "not-authorized" | "unknown";
 export type SignInResult = { ok: true } | { ok: false; reason: SignInFailure };
 
-type Verdict = "admin" | "not-admin" | "error";
+type Verdict = { kind: "ok"; role: AdminRole } | { kind: "not-admin" } | { kind: "error" };
 
 /**
- * Asks the database whether the signed-in user is an administrator (`is_admin()`, backed by the
- * `admin_users` allow-list). This only drives what the screen shows — every read and write the admin
- * makes is independently enforced by Row Level Security, so a tampered browser gains nothing.
+ * Asks the database who the signed-in user is (`get_my_role()`, backed by the `admin_users` allow-list:
+ * 'owner', 'staff' or nothing). This only drives what the screen shows — every read and write is
+ * independently enforced by Row Level Security / the order RPCs, so a tampered browser gains nothing.
  */
 async function verifyAdmin(client: SupabaseClient): Promise<Verdict> {
-  const { data, error } = await client.rpc("is_admin");
-  if (error) return "error";
-  return data === true ? "admin" : "not-admin";
+  const { data, error } = await client.rpc("get_my_role");
+  if (error) return { kind: "error" };
+  return data === "owner" || data === "staff" ? { kind: "ok", role: data } : { kind: "not-admin" };
 }
 
 /** Ends the session everywhere (server-side revoke) and makes sure nothing stays in localStorage. */
@@ -57,7 +60,9 @@ function classifySignInError(error: AuthError): SignInFailure {
  *  - On load: restores a saved session, then confirms with `is_admin()`. A logged-in user who is NOT an
  *    admin is signed out immediately and told the account isn't authorized.
  *  - `signIn` / `signOut`: email + password login; logout revokes the session on the server too.
- *  - Idle logout: after `IDLE_LOGOUT_MS` (60 min) without a click, key or touch, the admin is signed out.
+ *  - Idle logout: after `IDLE_LOGOUT_MS` (60 min) without a click, key or touch, an OWNER is signed out. The
+ *    shared STAFF account is exempt — it sits on the order terminal all day, where nobody "clicks" while orders
+ *    arrive, and it can only handle orders (enforced by the database), so leaving it signed in is safe.
  */
 export function useAdminSession() {
   const client = config ? getAdminClient(config) : null;
@@ -74,9 +79,9 @@ export function useAdminSession() {
     }
     const verdict = await verifyAdmin(client);
     if (!alive.current) return;
-    if (verdict === "admin") {
-      setState({ status: "admin", email: data.session.user.email ?? "" });
-    } else if (verdict === "not-admin") {
+    if (verdict.kind === "ok") {
+      setState({ status: "admin", email: data.session.user.email ?? "", role: verdict.role });
+    } else if (verdict.kind === "not-admin") {
       await clearSession(client);
       if (alive.current) setState({ status: "signedOut", notice: "not-authorized" });
     } else {
@@ -108,12 +113,12 @@ export function useAdminSession() {
       if (error) return { ok: false, reason: classifySignInError(error) };
 
       const verdict = await verifyAdmin(client);
-      if (verdict === "admin") {
-        setState({ status: "admin", email: data.user.email ?? email.trim() });
+      if (verdict.kind === "ok") {
+        setState({ status: "admin", email: data.user.email ?? email.trim(), role: verdict.role });
         return { ok: true };
       }
       await clearSession(client); // never keep a non-admin (or unverifiable) session around
-      if (verdict === "not-admin") {
+      if (verdict.kind === "not-admin") {
         setState({ status: "signedOut", notice: "not-authorized" });
         return { ok: false, reason: "not-authorized" };
       }
@@ -136,9 +141,10 @@ export function useAdminSession() {
     void establish();
   }, [establish]);
 
-  // Idle logout — wall-clock based, so it also fires after the computer slept.
+  // Idle logout (owner only) — wall-clock based, so it also fires after the computer slept.
+  const idleRole = state.status === "admin" ? state.role : null;
   useEffect(() => {
-    if (state.status !== "admin") return;
+    if (idleRole !== "owner") return;
     let lastActivity = Date.now();
     const touch = () => {
       lastActivity = Date.now();
@@ -152,7 +158,7 @@ export function useAdminSession() {
       for (const name of events) window.removeEventListener(name, touch, { capture: true });
       window.clearInterval(timer);
     };
-  }, [state.status, signOut]);
+  }, [idleRole, signOut]);
 
   return { state, client, signIn, signOut, retry };
 }

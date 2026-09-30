@@ -126,7 +126,7 @@ export function createFakeDatabase(options: { migration0005?: boolean } = {}) {
 
     // the public catalog: anyone (anon key) may call it
     if (rpc === "get_storefront_catalog") { await json(200, catalog()); return true; }
-    if (rpc === "is_admin") return false; // the base stub answers it
+    if (rpc === "is_admin" || rpc === "get_my_role") return false; // the base stub answers it
 
     // migration 0005 not applied: its functions do not exist (PostgREST answers 404 PGRST202)
     if (!migration0005 && rpc && /^admin_/.test(rpc)) {

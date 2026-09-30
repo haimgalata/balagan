@@ -19,9 +19,14 @@ export interface StubUser {
   id: string;
   /** what is_admin() answers for this user (the real one reads the admin_users allow-list) */
   isAdmin: boolean;
+  /** what get_my_role() answers; defaults to 'owner' when isAdmin, otherwise null (not in the allow-list) */
+  role?: "owner" | "staff" | null;
 }
 
 export const ADMIN_USER: StubUser = { email: "owner@example.test", password: "correct-horse-battery", id: "00000000-0000-0000-0000-00000000000a", isAdmin: true };
+/** The shared order-terminal account: in the allow-list as 'staff' — is_admin() (owner-only) is false for it. */
+export const STAFF_USER: StubUser = { email: "terminal@example.test", password: "terminal-password-1", id: "00000000-0000-0000-0000-00000000000c", isAdmin: false, role: "staff" };
+export const roleOf = (user: StubUser): "owner" | "staff" | null => user.role !== undefined ? user.role : user.isAdmin ? "owner" : null;
 export const PLAIN_USER: StubUser = { email: "someone@example.test", password: "another-password-1", id: "00000000-0000-0000-0000-00000000000b", isAdmin: false };
 
 export interface StubOptions {
@@ -145,6 +150,13 @@ export async function stubSupabase(page: Page, options: StubOptions = {}) {
       try { body = request.postData() ? JSON.parse(request.postData()!) : null; } catch { body = null; }
       const handled = await options.extra({ route, method: request.method(), url, body, headers: request.headers(), user: byId(sub), json: (status, payload, extraHeaders) => route.fulfill({ status, headers: { ...CORS, ...extraHeaders }, contentType: "application/json", body: payload === null ? "" : JSON.stringify(payload) }) });
       if (handled) return;
+    }
+
+    // ---- get_my_role(): what the admin app asks after every login / reload
+    if (url.pathname === "/rest/v1/rpc/get_my_role") {
+      const user = byId(sub);
+      if (!user) return json(route, 401, { code: "42501", message: "permission denied for function get_my_role" });
+      return json(route, 200, roleOf(user));
     }
 
     // ---- is_admin()

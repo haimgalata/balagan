@@ -200,7 +200,7 @@ export function createFakeDatabase() {
     if (!table && !rpc && !uploadPath && !isRemoveCall) return false;
 
     if (rpc === "get_storefront_catalog") { await json(200, catalog()); return true; }
-    if (rpc === "is_admin") return false; // the base stub answers it
+    if (rpc === "is_admin" || rpc === "get_my_role") return false; // the base stub answers it
 
     if (failAll) { await json(failAll.status, failAll.body ?? { message: "boom" }); return true; }
     if (failNext) {

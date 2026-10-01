@@ -7,6 +7,8 @@ import { CategoriesPage } from "@/admin/categories/CategoriesPage";
 import { ProductsPage } from "@/admin/products/ProductsPage";
 import { BusinessSettingsPage } from "@/admin/settings/BusinessSettingsPage";
 import { OrdersPage } from "@/admin/orders/OrdersPage";
+import { CustomersPage } from "@/admin/customers/CustomersPage";
+import { CUSTOMERS_PATH } from "@/admin/customers/customersRoute";
 import { ORDERS_PATH, isOrdersPath } from "@/admin/orders/ordersRoute";
 import type { AdminRole } from "@/admin/useAdminSession";
 
@@ -23,6 +25,7 @@ const NAV_ITEMS = [
   { label: "הזמנות", path: ORDERS_PATH, enabled: true, ownerOnly: false },
   { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true, ownerOnly: true },
   { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true, ownerOnly: true },
+  { label: "לקוחות", path: CUSTOMERS_PATH, enabled: true, ownerOnly: true },
   { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true, ownerOnly: true },
 ] as const;
 
@@ -173,6 +176,8 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
           <CategoriesPage client={client} />
         ) : path === `${ADMIN_ROOT}/products` ? (
           <ProductsPage client={client} />
+        ) : path === CUSTOMERS_PATH ? (
+          <CustomersPage client={client} />
         ) : path === `${ADMIN_ROOT}/settings` ? (
           <BusinessSettingsPage client={client} />
         ) : (

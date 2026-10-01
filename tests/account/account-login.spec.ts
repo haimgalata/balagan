@@ -161,3 +161,23 @@ test("a stored session the database no longer accepts is dropped quietly", async
   await expect.poll(() => readLocalStorage(page, SESSION_KEY)).toBeNull();
   await expect.poll(() => readLocalStorage(page, HINT_KEY)).toBeNull();
 });
+
+test("a code that verifies but whose session the database refuses is reported — the form never freezes on a spinner", async ({ page }) => {
+  // This is what happens when the mock login is pointed at a REAL Supabase project: its fake token is rejected with 401.
+  await stubMemberRpc(page);
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, apikey, content-type", "access-control-allow-methods": "*" };
+  await page.route("**/rest/v1/rpc/get_my_customer", (route) =>
+    route.request().method() === "OPTIONS"
+      ? route.fulfill({ status: 204, headers: cors })
+      : route.fulfill({ status: 401, headers: cors, contentType: "application/json", body: JSON.stringify({ message: "JWT invalid" }) })
+  );
+  await gotoReady(page);
+  const drawer = await openAccount(page);
+  await loginWithCode(page);
+
+  await expect(drawer.getByRole("alert")).toContainText("לא הצלחנו להתחבר לשירות");
+  await expect(drawer.getByLabel("קוד אימות")).toBeEnabled(); // usable again, not stuck busy
+  await expect(drawer.getByRole("button", { name: "אישור" })).toBeDisabled(); // (empty code) but not showing a spinner
+  expect(await readLocalStorage(page, SESSION_KEY)).toBeNull();
+  expect(await readLocalStorage(page, HINT_KEY)).toBeNull();
+});

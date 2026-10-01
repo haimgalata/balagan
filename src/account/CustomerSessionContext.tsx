@@ -45,17 +45,19 @@ export function CustomerSessionProvider({ children }: { children: ReactNode }) {
   const authRef = useRef<CustomerAuth | null>(null);
   const config = useMemo(() => getCatalogConfig(), []);
 
+  /** Loads the profile for a session and moves the state accordingly. Says what happened, so a caller (the login) can react. */
   const resolve = useCallback(
-    async (session: CustomerSession) => {
+    async (session: CustomerSession): Promise<"member" | "needs-join" | "error" | "signed-out"> => {
       try {
         const profile = await getMyCustomer(config, session.accessToken);
         if (profile) {
           writeMemberHint({ firstName: profile.firstName });
           setState({ status: "member", session, profile });
-        } else {
-          writeMemberHint(null);
-          setState({ status: "needs-join", session });
+          return "member";
         }
+        writeMemberHint(null);
+        setState({ status: "needs-join", session });
+        return "needs-join";
       } catch (error) {
         const code = error instanceof MemberApiError ? error.code : "NETWORK_ERROR";
         if (code === "UNAUTHENTICATED") {
@@ -63,9 +65,10 @@ export function CustomerSessionProvider({ children }: { children: ReactNode }) {
           await authRef.current?.signOut();
           writeMemberHint(null);
           setState({ status: "guest" });
-          return;
+          return "signed-out";
         }
         setState({ status: "error", session, code });
+        return "error";
       }
     },
     [config]
@@ -110,7 +113,9 @@ export function CustomerSessionProvider({ children }: { children: ReactNode }) {
       },
       async verifyCode(phoneE164, code) {
         const session = await requireAuth().verifyCode(phoneE164, code.trim());
-        await resolve(session);
+        // A code that verifies but whose session the database then refuses must NOT look like success (the form would
+        // otherwise wait forever): tell the login form so it can say so and let the person try again.
+        if ((await resolve(session)) === "signed-out") throw new CustomerAuthError("NETWORK");
       },
       async join(input) {
         if (state.status !== "needs-join") return;

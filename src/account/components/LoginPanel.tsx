@@ -72,7 +72,8 @@ export function LoginPanel({ onContinueAsGuest }: { onContinueAsGuest?: () => vo
     setError(null);
     try {
       await verifyCode(e164, value);
-      // success: the session context switches the panel to the next screen
+      // success: the session context swaps this panel for the next screen — but never leave the form frozen if it can't
+      setBusy(false);
     } catch (caught) {
       setError(describeAuthError(caught));
       setCode("");

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:club": "node scripts/dev-club.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",

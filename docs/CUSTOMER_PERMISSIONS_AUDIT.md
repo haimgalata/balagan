@@ -49,9 +49,28 @@ the channel. The reviewed-function list in the verify script now includes the th
 function `authenticated` can execute and **fails if a function appears that is not on the reviewed list**, so a future
 migration cannot silently expose something to members. Without 0011 the script reports 7 failures; with it, all pass.
 
+## The live probe (scripts/security-test.mjs, "Club" section)
+HTTP-level equivalent of the sweep above, run against the real project with the anon key plus test-account passwords:
+- **Always (needs `USER_EMAIL`/`USER_PASSWORD`: an ordinary non-admin user, no phone, never joined):** every club/order table is
+  closed to them, nothing can be written (not even self-made membership), `join_club()` needs both mandatory confirmations
+  (and a truthy string is not "true"), anon cannot call any member function, the owner's customer functions refuse anon / an
+  ordinary user / staff, the internal helpers are unreachable even for the owner, and the owner has no direct table access
+  to customer data. Without `USER_*` this group is reported as SKIPPED (exit 2), never as passed.
+- **Optional (`MEMBER_EMAIL`/`MEMBER_PASSWORD`: a dedicated test user with a verified mobile number on `auth.users`):** a real
+  member's lifecycle — join (the phone comes from the login, not the request), an order attached by the database, the
+  whitelisted order history, safe-column edits only, isolation from another user and from the owner, consent withdrawal
+  and re-grant visible in the owner's numbers, and finally `delete_my_account()` (the test user is cleaned up again).
+- **`--signups-enabled` (after sign-ups are switched on):** a self-registered stranger has no power at all.
+Failure messages never echo response bodies (a live response could hold real customer data). The probe's own logic was
+verified against a PostgREST-style emulator over the real migrations (99 checks pass; without `0011` it fails exactly the three
+"member reads orders/items/events through the table API" checks).
+
 ## Remaining before sign-ups are enabled
-1. Apply `0011_customer_security_hardening.sql` then `0012_customers.sql` to the live project (SQL Editor; both re-runnable; neither enables sign-ups).
-2. Extend `scripts/security-test.mjs` with a plain logged-in probe user (HTTP-level equivalent of the sweep above) and
-   replace the `--check-signup` expectation; run it against the live project. *(not done yet)*
-3. Update `supabase/README.md` step 2 ("sign-ups OFF") only at the moment sign-ups are turned on.
-4. Rate limits / captcha plan for SMS before a real provider is connected.
+1. ~~Apply `0011`, `0012`, `0013` to the live project~~ — **done** (owner, in order; the existing live tests passed afterwards).
+2. ~~Write the live customer probe~~ — **done** (section above). **Run it against the live project and get it green** (with at
+   least `USER_*`; `MEMBER_*` is recommended).
+3. Real SMS/OTP provider (one adapter + one loader branch), a **rate-limit / captcha plan for SMS sending** (once sign-ups
+   are open anyone can trigger paid messages), terms + privacy pages, and legal review of the consent wording.
+4. Only then enable public sign-ups; then update `supabase/README.md` step 2 ("sign-ups OFF") and run
+   `node scripts/security-test.mjs --signups-enabled` (+ the normal run) once more, followed by a final end-to-end test
+   with a real phone.

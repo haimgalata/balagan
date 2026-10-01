@@ -24,6 +24,14 @@
  * by the ADMIN token too, since it is granted only to service_role, which this script never uses. If a
  * migration has not been applied yet, its section reports a SKIP (exit code 2) instead of failing.
  *
+ * Club (migrations 0011-0013): the "Club" section proves that an ordinary logged-in user (USER_*) — the permission
+ * surface every future club member has — can reach nothing admin and nothing of anyone else's: every club/order table is
+ * closed, nothing can be written (not even self-made membership), join_club() needs BOTH mandatory confirmations, the
+ * owner's customer functions are owner-only (not staff, not anon), the internal helpers are unreachable even for the owner,
+ * and the owner has no direct table access to customer data. With MEMBER_* it also runs a REAL member's lifecycle (join, an
+ * order attached by the database, whitelisted order history, safe-column edits only, isolation, consent withdrawal and
+ * re-grant, deletion) and deletes the test member again. Without USER_* the club group is SKIPPED (exit 2), never "passed".
+ *
  * Zero dependencies (plain fetch, Node >= 18). Uses ONLY the public anon key plus
  * test-account passwords supplied through the environment — never the
  * service-role key. Nothing secret is printed.
@@ -33,7 +41,16 @@
  *   $env:ADMIN_EMAIL="..."; $env:ADMIN_PASSWORD="..."
  *   $env:USER_EMAIL="..."; $env:USER_PASSWORD="..."      # a normal user that is NOT in admin_users
  *   $env:STAFF_EMAIL="..."; $env:STAFF_PASSWORD="..."    # (optional, migration 0010) a user in admin_users with role 'staff'
- *   node scripts/security-test.mjs [--check-signup]
+ *   $env:MEMBER_EMAIL="..."; $env:MEMBER_PASSWORD="..."  # (optional, migrations 0011-0013) a DEDICATED test user for the club-member lifecycle:
+ *                                                         #   not in admin_users, with a verified Israeli mobile number set on auth.users, e.g. in the
+ *                                                         #   SQL editor: update auth.users set phone='9725XXXXXXXX', phone_confirmed_at=now() where email='...';
+ *   node scripts/security-test.mjs [--check-signup | --signups-enabled]
+ *
+ *   --signups-enabled  for use AFTER public sign-ups are switched on (phone login for club members): instead of expecting
+ *                   self-registration to be refused, it self-registers a throwaway e-mail user and proves it has NO power
+ *                   (not an admin, sees no tables, cannot use any admin/owner function, cannot become a member). It leaves
+ *                   one unconfirmed throwaway user behind (this script has no service-role key by design): delete it in
+ *                   Authentication -> Users. Mutually exclusive with --check-signup.
  *
  *   --check-signup  also tries to self-register a throwaway user against
  *                   /auth/v1/signup and expects it to be REFUSED (proves public
@@ -57,7 +74,13 @@ const ANON = env("SUPABASE_ANON_KEY");
 const ADMIN_EMAIL = env("ADMIN_EMAIL"), ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
 const USER_EMAIL = env("USER_EMAIL"), USER_PASSWORD = process.env.USER_PASSWORD ?? "";
 const STAFF_EMAIL = env("STAFF_EMAIL"), STAFF_PASSWORD = process.env.STAFF_PASSWORD ?? "";
+const MEMBER_EMAIL = env("MEMBER_EMAIL"), MEMBER_PASSWORD = process.env.MEMBER_PASSWORD ?? "";
 const CHECK_SIGNUP = process.argv.includes("--check-signup");
+const SIGNUPS_ENABLED = process.argv.includes("--signups-enabled");
+if (CHECK_SIGNUP && SIGNUPS_ENABLED) {
+  console.error("Use EITHER --check-signup (sign-ups must be refused) OR --signups-enabled (sign-ups are on: prove a stranger has no power), not both.");
+  process.exit(1);
+}
 
 if (!URL_ || !ANON || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
   console.error("Missing env. Required: SUPABASE_URL, SUPABASE_ANON_KEY, ADMIN_EMAIL, ADMIN_PASSWORD (and USER_EMAIL/USER_PASSWORD for the non-admin checks).");
@@ -153,6 +176,288 @@ async function cleanup() {
     if (orderIds.length) console.log(`    delete from public.orders where id in (${orderIds.map((id) => `'${id}'`).join(",")});`);
     console.log("    delete from public.products where id in ('900000001','900000002','900000003','900000004');\n    delete from public.subcategories where slug like 'zz-security-probe%';\n    delete from public.categories where slug like 'zz-security-probe%';\n    (and delete the object products/900000001/probe.png from bucket product-images)");
   }
+}
+
+// ---------------------------------------------------------------- club probes (migrations 0011-0013)
+const MEMBER_RPCS = ["get_my_customer", "get_my_orders", "claim_guest_orders", "join_club", "set_marketing_consent", "delete_my_account"];
+const OWNER_CUSTOMER_FNS = [
+  ["admin_customer_stats", {}],
+  ["admin_list_customers", {}],
+  ["admin_export_audience", { p_kind: "suppression" }],
+];
+/** Columns a customer must NEVER get back from get_my_orders() (internal / staff-only / identifying). */
+const MY_ORDERS_FORBIDDEN_KEYS = ["cancel_reason", "stock_return_status", "idempotency_key", "customer_id", "phone_digits", "phone_e164", "actor_label", "actor_id", "status_changed_at"];
+
+const refused = (r) => r.status >= 400;
+/** What to print when a check on a READ fails: the status and the row count only — never the body, which on a live project could be real customer data. */
+const brief = (r) => `HTTP ${r.status}${Array.isArray(r.json) ? ` (${r.json.length} rows)` : ""}`;
+
+/**
+ * Part 1 — what an ORDINARY logged-in user (USER_EMAIL: logged in, not in admin_users, NOT a club member) can and
+ * cannot do. This is the permission surface every future club member has, so it is THE gate before public
+ * sign-ups are enabled: once phone login is on, "authenticated" stops meaning "back-office".
+ * Needs only USER_EMAIL / USER_PASSWORD (no phone number). Returns true if it ran.
+ */
+async function clubPlainUserChecks() {
+  if (!userToken) {
+    skipped.push("club permissions (set USER_EMAIL / USER_PASSWORD: an ordinary non-admin user WITHOUT a phone number and NOT a club member)");
+    section("Club permissions  --  SKIPPED (set USER_EMAIL / USER_PASSWORD)");
+    return false;
+  }
+  const probe = await rpc("get_my_customer", userToken);
+  if (probe.status === 404 || pgCode(probe) === "PGRST202") {
+    skipped.push("club permissions (apply supabase/migrations/0011-0013, then re-run)");
+    section("Club permissions  --  SKIPPED: migration 0012 is not applied yet");
+    return false;
+  }
+  section("Club (migrations 0011-0013) — an ordinary logged-in user: nothing admin, nothing of anyone else's");
+  let r;
+  check("(fixture) USER is not a club member (use a plain user: no phone number, never joined)", probe.status === 200 && probe.json === null, `HTTP ${probe.status} ${probe.text.slice(0, 100)}`);
+
+  // -- every table that holds club / order data is closed to them
+  for (const t of ["customers", "customer_consents", "customer_addresses", "customer_exports", "orders", "order_items", "order_status_events", "admin_users"]) {
+    r = await rest("GET", `${t}?select=*&limit=1`, { token: userToken });
+    check(`ordinary user sees nothing in ${t}`, deniedOrEmpty(r), brief(r));
+  }
+  // -- ...and nothing can be written, including pretending to be a member
+  for (const [n, method, path, body] of [
+    ["make themselves a member (INSERT customers)", "POST", "customers", { id: userId, phone_e164: "+972501234567" }],
+    ["write a consent record", "POST", "customer_consents", { customer_id: userId, kind: "marketing", granted: true, wording_version: "v1", source: "account" }],
+    ["save an address without being a member", "POST", "customer_addresses", { customer_id: userId, street: "הרצל", house_number: "1" }],
+    ["write the export log", "POST", "customer_exports", { actor_label: "x", kind: "sms", row_count: 0 }],
+    ["edit a customer profile", "PATCH", `customers?id=eq.${userId}`, { first_name: "x" }],
+    ["delete addresses", "DELETE", `customer_addresses?customer_id=eq.${userId}`, undefined],
+    ["delete consents", "DELETE", `customer_consents?customer_id=eq.${userId}`, undefined],
+    ["rewrite an order's owner", "PATCH", "orders?customer_id=is.null", { customer_id: userId }],
+  ]) {
+    r = await rest(method, path, { token: userToken, body });
+    check(`ordinary user cannot ${n}`, refused(r) || isEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  }
+
+  // -- the member RPCs: harmless for a non-member, and joining needs BOTH mandatory confirmations
+  r = await rpc("get_my_orders", userToken, { p_limit: 50 });
+  check("get_my_orders() is an empty list for a non-member", r.status === 200 && Array.isArray(r.json) && r.json.length === 0, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("claim_guest_orders", userToken);
+  check("claim_guest_orders() claims nothing for a non-member", r.status === 200 && r.json === 0, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("join_club", userToken, { p_payload: {} });
+  check("join_club() refuses without the 21+ confirmation", refused(r) && /AGE_21_REQUIRED/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("join_club", userToken, { p_payload: { age_21_confirmed: true } });
+  check("join_club() refuses without the marketing consent", refused(r) && /MARKETING_CONSENT_REQUIRED/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("join_club", userToken, { p_payload: { age_21_confirmed: true, marketing_consent: "yes" } });
+  check("join_club() accepts only a real true (not a truthy string)", refused(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("set_marketing_consent", userToken, { p_granted: true });
+  check("set_marketing_consent() is refused for a non-member", refused(r) && /NOT_A_MEMBER|permission denied/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("get_my_customer", userToken);
+  check("...and none of that made them a member", r.status === 200 && r.json === null, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+  // -- anonymous visitors cannot touch any member function
+  for (const fn of MEMBER_RPCS) {
+    r = await rpc(fn, ANON, fn === "join_club" ? { p_payload: {} } : fn === "set_marketing_consent" ? { p_granted: true } : {});
+    check(`anon cannot call ${fn}()`, refused(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  }
+
+  // -- the owner's customer tools are OWNER-only: not anon, not an ordinary user, not staff
+  for (const [fn, args] of OWNER_CUSTOMER_FNS) {
+    for (const [who, token] of [["anon", ANON], ["an ordinary logged-in user", userToken], ...(staffToken ? [["staff", staffToken]] : [])]) {
+      r = await rpc(fn, token, args);
+      check(`${who} cannot call ${fn}()`, refused(r) && !Array.isArray(r.json) && !/"members"|"rows"/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+  }
+
+  // -- internal helpers are not reachable through the API at all (even for the owner)
+  for (const [fn, args] of [
+    ["customer_marketing_state", {}],
+    ["customers_filtered", { p_term: null, p_marketing: "all" }],
+    ["customer_apply_order", { p_order_id: randomUUID() }],
+    ["normalize_il_phone", { p_raw: "0501234567" }],
+  ]) {
+    for (const [who, token] of [["an ordinary user", userToken], ["the owner", adminToken]]) {
+      r = await rpc(fn, token, args);
+      check(`${who} cannot call the internal ${fn}()`, refused(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+  }
+
+  // -- the owner reaches customer data ONLY through the audited functions, never the tables
+  for (const t of ["customers", "customer_consents", "customer_addresses", "customer_exports"]) {
+    r = await rest("GET", `${t}?select=*&limit=1`, { token: adminToken });
+    check(`the owner has no direct table access to ${t}`, deniedOrEmpty(r), brief(r));
+  }
+  // -- the owner's functions work and answer in the shape the screen expects (counts only: no personal data is read here)
+  r = await rpc("admin_customer_stats", adminToken);
+  check("the owner's admin_customer_stats() answers with counts", r.status === 200 && typeof r.json?.members === "number" && typeof r.json?.withdrawn === "number" && typeof r.json?.last_exports === "object", `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+  r = await rpc("admin_list_customers", adminToken, { p_limit: 1 });
+  check("admin_list_customers() answers { total, rows } and never more than asked", r.status === 200 && typeof r.json?.total === "number" && Array.isArray(r.json?.rows) && r.json.rows.length <= 1, `HTTP ${r.status}`);
+  check("...its rows hold no address or consent text", (r.json?.rows ?? []).every((row) => !("street" in row) && !("terms_version" in row) && !("deleted_at" in row)));
+  r = await rpc("admin_list_customers", adminToken, { p_marketing: "everyone" });
+  check("an unknown filter is refused", refused(r) && /INVALID_FILTER/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  r = await rpc("admin_export_audience", adminToken, { p_kind: "everyone" });
+  check("an unknown export kind is refused (and nothing is exported or logged)", refused(r) && /INVALID_KIND/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+  return true;
+}
+
+/**
+ * Part 2 (optional) — the full lifecycle of a REAL club member, against the live project. Needs a dedicated test user
+ * (MEMBER_EMAIL / MEMBER_PASSWORD) that is NOT in admin_users and has a verified Israeli MOBILE number on the auth user —
+ * join_club() reads the phone from auth.users, never from the request. Create it in the SQL editor, e.g.:
+ *     update auth.users set phone = '9725XXXXXXXX', phone_confirmed_at = now() where email = 'zz-member-probe@example.test';
+ * The test joins it, places a probe order, checks isolation, withdraws and re-grants marketing, and finally DELETES the
+ * account (delete_my_account: profile + addresses removed, the probe order kept but unlinked, only the phone stays on the
+ * emptied row as a suppression record — the next run simply re-joins). Called from inside the orders section, where the
+ * hidden probe product and the order helpers exist.
+ */
+async function clubMemberChecks({ createOrder, orderPayload }) {
+  if (!MEMBER_EMAIL || !MEMBER_PASSWORD) {
+    skipped.push("club member lifecycle (set MEMBER_EMAIL / MEMBER_PASSWORD: a dedicated non-admin test user with a verified mobile phone set on auth.users)");
+    section("Club member lifecycle  --  SKIPPED (set MEMBER_EMAIL / MEMBER_PASSWORD)");
+    return;
+  }
+  const probe = await rpc("get_my_customer", userToken || ANON);
+  if (probe.status === 404 || pgCode(probe) === "PGRST202") return; // migration 0012 missing — reported by the plain-user part
+  const m = await signIn(MEMBER_EMAIL, MEMBER_PASSWORD);
+  if (m.error) { check("(fixture) club member test user signs in", false, m.error); return; }
+  const mt = m.token, mid = m.userId;
+  section("Club member lifecycle — a real member against the live project (the test user is deleted again at the end)");
+  let r;
+  const placed = []; // this run's probe orders placed as / next to the member
+  const myOrder = async (id) => (await rest("GET", `orders?id=eq.${id}&select=id,customer_id`, { token: adminToken })).json?.[0];
+
+  try {
+    // ---- joining
+    const existing = (await rpc("get_my_customer", mt)).json;
+    if (existing === null) {
+      r = await rpc("join_club", mt, { p_payload: { wording_version: "v1" } });
+      check("a fresh member cannot join without the confirmations", refused(r) && /AGE_21_REQUIRED/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rpc("join_club", mt, { p_payload: { age_21_confirmed: true, wording_version: "v1" } });
+      check("...nor with only the 21+ confirmation", refused(r) && /MARKETING_CONSENT_REQUIRED/.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rpc("join_club", mt, { p_payload: { age_21_confirmed: true, marketing_consent: true, wording_version: "v1", channels: ["sms", "email"], phone: "+972500000000" } });
+      check("joining with both confirmations works", r.status === 200 && r.json?.created === true, `HTTP ${r.status}`);
+      check("...the phone comes from the login (auth.users), NOT from the request (a phone sent in the body is ignored)", /^\+9725\d{8}$/.test(r.json?.phone ?? "") && r.json?.phone !== "+972500000000", `phone: ${(r.json?.phone ?? "").replace(/\d(?=\d{3})/g, "*")}`);
+    } else {
+      console.log("  note  the test user was already a member (a previous run did not finish) — continuing with it");
+    }
+    r = await rpc("join_club", mt, { p_payload: {} });
+    check("joining again is harmless and needs no confirmation", r.status === 200 && r.json?.created === false, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    const profile = (await rpc("get_my_customer", mt)).json;
+    check("get_my_customer(): a member with the consent on record", profile?.marketing === true && typeof profile?.age_21_confirmed_at === "string", JSON.stringify(profile ? { ...profile, phone: "***", id: "***" } : null));
+
+    // ---- an order placed as a member is attached by the DATABASE; the probe stock is topped up first (earlier sections used it)
+    await rest("PATCH", `products?id=eq.${PID_ORDER}`, { token: adminToken, body: { stock_base_units: 50 } });
+    r = await createOrder(mt, orderPayload({}, { street: "הרצל", house_number: "1" }), randomUUID());
+    const oid = r.json?.order_id;
+    if (oid) { orderIds.push(oid); placed.push(oid); }
+    check("(fixture) the member places a probe order", r.status === 200 && typeof oid === "string", `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+    check("the order is attached to the member by the database", (await myOrder(oid))?.customer_id === mid);
+    r = await createOrder(ANON, orderPayload({}, { customer_id: mid }), randomUUID());
+    const sneakyId = r.json?.order_id;
+    if (sneakyId) { orderIds.push(sneakyId); placed.push(sneakyId); }
+    check("a customer_id smuggled into a guest order is ignored", r.status === 200 && (await myOrder(sneakyId))?.customer_id === null, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    r = await rest("GET", "customer_addresses?select=street,house_number", { token: mt });
+    check("the delivery address was saved automatically by the order", Array.isArray(r.json) && r.json.some((a) => a.street === "הרצל" && a.house_number === "1"), `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+
+    // ---- a member sees their orders ONLY through the whitelisted function
+    r = await rpc("get_my_orders", mt, { p_limit: 20 });
+    const mine = Array.isArray(r.json) ? r.json.find((o) => o.id === oid) : undefined;
+    check("get_my_orders() lists the member's order, with its items", !!mine && Array.isArray(mine.items) && mine.items.length === 1 && mine.order_status === "confirmed", brief(r));
+    check("...and none of the internal fields (cancel reason, stock state, idempotency key, customer id, staff names)",
+      !!mine && MY_ORDERS_FORBIDDEN_KEYS.every((k) => !(k in mine)), mine ? Object.keys(mine).join(",") : "");
+    check("...the sneaky guest order is not theirs", Array.isArray(r.json) && !r.json.some((o) => o.id === sneakyId));
+    for (const t of ["orders", "order_items", "order_status_events"]) {
+      r = await rest("GET", `${t}?select=*&limit=1`, { token: mt });
+      check(`the member cannot read ${t} through the table API`, deniedOrEmpty(r), brief(r));
+    }
+    r = await rpc("transition_order", mt, { p_order_id: oid, p_expected_status: "confirmed", p_to_status: "cancelled", p_reason: "x" });
+    check("the member cannot move or cancel orders (back-office only)", refused(r) && /NOT_AUTHORIZED|permission denied/i.test(r.text), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    for (const [fn, args] of OWNER_CUSTOMER_FNS) {
+      r = await rpc(fn, mt, args);
+      check(`the member cannot call the owner's ${fn}()`, refused(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+
+    // ---- their own profile: editable only in the safe columns
+    r = await rest("GET", "customers?select=id", { token: mt });
+    check("the member reads exactly their own profile row", Array.isArray(r.json) && r.json.length === 1 && r.json[0].id === mid, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    r = await rest("PATCH", `customers?id=eq.${mid}`, { token: mt, body: { first_name: "zz-probe" } });
+    check("...they can edit their name", r.status === 200 && r.json?.[0]?.first_name === "zz-probe", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    for (const [n, body] of [["phone number", { phone_e164: "+972500000001" }], ["terms record", { terms_version: "v9" }], ["deleted flag", { deleted_at: new Date().toISOString() }], ["join date", { joined_at: "2000-01-01T00:00:00Z" }]]) {
+      r = await rest("PATCH", `customers?id=eq.${mid}`, { token: mt, body });
+      check(`...but not their ${n}`, refused(r) || isEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+    r = await rest("POST", "customer_consents", { token: mt, body: { customer_id: mid, kind: "marketing", granted: true, wording_version: "v9", source: "account" } });
+    check("the member cannot write consent records directly (only the functions do)", refused(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    r = await rest("PATCH", `customer_consents?customer_id=eq.${mid}`, { token: mt, body: { granted: false } });
+    check("...nor rewrite history", refused(r) || isEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+
+    // ---- isolation: nobody else — not another user, not the owner — can reach this member's data through the tables
+    if (userToken) {
+      for (const [t, col] of [["customers", "id"], ["customer_addresses", "customer_id"], ["customer_consents", "customer_id"]]) {
+        r = await rest("GET", `${t}?${col}=eq.${mid}&select=*`, { token: userToken });
+        check(`another logged-in user cannot read the member's ${t}`, deniedOrEmpty(r), brief(r));
+      }
+      r = await rest("PATCH", `customers?id=eq.${mid}`, { token: userToken, body: { first_name: "hijack" } });
+      check("another user cannot edit the member's profile", refused(r) || isEmpty(r), `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+      r = await rpc("get_my_orders", userToken, { p_limit: 50 });
+      check("another user's get_my_orders() does not include the member's order", Array.isArray(r.json) && !r.json.some((o) => o.id === oid), `HTTP ${r.status}`);
+    }
+    for (const t of ["customers", "customer_addresses", "customer_consents"]) {
+      r = await rest("GET", `${t}?select=*&limit=1`, { token: adminToken });
+      check(`the owner still has no table access to the member's ${t}`, deniedOrEmpty(r), brief(r));
+    }
+
+    // ---- consent: withdrawn through the function, visible to the owner's numbers, re-grantable
+    const before = (await rpc("admin_customer_stats", adminToken)).json;
+    r = await rpc("set_marketing_consent", mt, { p_granted: false });
+    check("withdrawing marketing consent works and keeps the account", r.status === 200 && r.json?.marketing === false && r.json?.id === mid, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    const after = (await rpc("admin_customer_stats", adminToken)).json;
+    check("the owner's numbers move: one fewer reachable by SMS, one more withdrawn", after?.withdrawn === (before?.withdrawn ?? 0) + 1 && after?.marketing_sms === (before?.marketing_sms ?? 0) - 1, JSON.stringify({ before: before?.withdrawn, after: after?.withdrawn }));
+    r = await rpc("set_marketing_consent", mt, { p_granted: true, p_channels: ["sms"] });
+    check("granting it again records the chosen channel", r.status === 200 && r.json?.marketing === true && JSON.stringify(r.json?.marketing_channels) === '["sms"]', `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    r = await rest("GET", "customer_consents?select=kind,granted&order=id", { token: mt });
+    check("the member can read their own consent history (append-only: age, marketing on, off, on)",
+      Array.isArray(r.json) && r.json.filter((c) => c.kind === "marketing").map((c) => c.granted).join() === "true,false,true", `HTTP ${r.status} ${r.text.slice(0, 160)}`);
+  } finally {
+    // ---- the right to be forgotten — and leave the test user as it was found
+    r = await rpc("delete_my_account", mt);
+    check("delete_my_account() succeeds", r.status < 300, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    const gone = await rpc("get_my_customer", mt);
+    check("...afterwards they are no longer a member and see no orders or addresses",
+      gone.json === null && (await rpc("get_my_orders", mt)).json?.length === 0 && (await rest("GET", "customer_addresses?select=id", { token: mt })).json?.length === 0, `HTTP ${gone.status} ${gone.text.slice(0, 100)}`);
+    const kept = placed.length ? await rest("GET", `orders?id=in.(${placed.join(",")})&select=id,customer_id`, { token: adminToken }) : { json: [] };
+    check("their past orders are kept for accounting but no longer linked to the account", placed.length > 0 && Array.isArray(kept.json) && kept.json.length === placed.length && kept.json.every((o) => o.customer_id === null), JSON.stringify(kept.json));
+  }
+}
+
+/**
+ * Part 3 (opt-in: --signups-enabled) — for AFTER public sign-ups are switched on. Instead of expecting self-registration
+ * to be refused, proves a freshly self-registered user has no power at all. NOTE: it creates a throwaway, unconfirmed
+ * user that this script cannot delete (no service-role key, by design) — remove it in Authentication -> Users.
+ */
+async function signupsEnabledChecks() {
+  section("Public sign-ups are ON: a self-registered user has no power");
+  const email = `zz-security-probe-${Date.now()}@example.invalid`;
+  const r = await call("POST", `${URL_}/auth/v1/signup`, { body: { email, password: randomUUID() + "Aa1!" } });
+  const token = r.json?.access_token;
+  if (!token) {
+    check("an e-mail sign-up does not log the stranger in (confirmation required, or sign-up refused)", r.status >= 200 && r.status < 500, `HTTP ${r.status}`);
+    console.log(`  note  throwaway user ${email} may exist (unconfirmed) — delete it in Authentication -> Users`);
+    return;
+  }
+  console.log(`  note  throwaway user ${email} WAS logged in immediately (e-mail confirmation is OFF) — delete it in Authentication -> Users`);
+  let x;
+  x = await rpc("is_admin", token);
+  check("a self-registered user is not an admin", x.json === false, `HTTP ${x.status} ${x.text.slice(0, 80)}`);
+  x = await rpc("get_my_role", token);
+  check("...has no back-office role", x.json === null, `HTTP ${x.status} ${x.text.slice(0, 80)}`);
+  for (const t of ["categories", "products", "business_settings", "orders", "order_items", "order_status_events", "payment_attempts", "customers", "customer_consents", "customer_addresses", "customer_exports", "admin_users"]) {
+    x = await rest("GET", `${t}?select=*&limit=1`, { token });
+    check(`...and sees nothing in ${t}`, deniedOrEmpty(x), brief(x));
+  }
+  for (const [fn, args] of [...OWNER_CUSTOMER_FNS, ["expire_stale_orders", {}], ["admin_product_counts", {}]]) {
+    x = await rpc(fn, token, args);
+    check(`...cannot use ${fn}()`, refused(x) || (Array.isArray(x.json) && x.json.length === 0), `HTTP ${x.status} ${x.text.slice(0, 100)}`);
+  }
+  x = await rest("POST", "customers", { token, body: { id: r.json?.user?.id, phone_e164: "+972501234567" } });
+  check("...cannot make themselves a club member by writing the table", refused(x), `HTTP ${x.status} ${x.text.slice(0, 100)}`);
+  x = await rpc("join_club", token, { p_payload: { age_21_confirmed: true, marketing_consent: true } });
+  check("...and join_club() refuses an e-mail-only account (a verified MOBILE number is required)", refused(x) && /MOBILE_REQUIRED/.test(x.text), `HTTP ${x.status} ${x.text.slice(0, 100)}`);
 }
 
 async function main() {
@@ -877,18 +1182,25 @@ async function main() {
       }
     }
 
+    await clubMemberChecks({ createOrder, orderPayload });
+
     // restore the probe category/subcategory to hidden (PID_ORDER itself is deleted entirely in cleanup)
     await rest("PATCH", `categories?id=eq.${CAT}`, { token: adminToken, body: { is_visible: false } });
     await rest("PATCH", `subcategories?id=eq.${SUB}`, { token: adminToken, body: { is_visible: false } });
   }
 
+  // ------------------------------------------------------------------- 5f. club (migrations 0011-0013)
+  await clubPlainUserChecks();
+
   // ------------------------------------------------------------------- 6. sign-ups
-  if (CHECK_SIGNUP) {
+  if (SIGNUPS_ENABLED) {
+    await signupsEnabledChecks();
+  } else if (CHECK_SIGNUP) {
     section("Public sign-up must be refused");
     r = await call("POST", `${URL_}/auth/v1/signup`, { body: { email: `zz-security-probe-${Date.now()}@example.invalid`, password: randomUUID() + "Aa1!" } });
     check("self-registration is refused", r.status >= 400, `HTTP ${r.status} — if this was 200 a junk user was created: delete it and DISABLE sign-ups (Authentication -> Sign In / Providers)`);
   } else {
-    skipped.push("sign-up check (run with --check-signup, or verify 'Allow new users to sign up' is OFF in the dashboard)");
+    skipped.push("sign-up check (run with --check-signup while sign-ups are OFF, or with --signups-enabled once they are ON)");
   }
 }
 

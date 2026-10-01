@@ -20,7 +20,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0011_customer_security_hardening.sql` | closes two gaps before customers can sign in: `order_status_events` becomes back-office only; the inert customer-read policies on `orders`/`order_items` are dropped (customers will use a column-whitelisting RPC). Changes nothing for owner/staff. See `docs/CUSTOMER_PERMISSIONS_AUDIT.md` | yes |
 | `migrations/0012_customers.sql` | Balagan Club (registered = member): `customers`, append-only `customer_consents`, `customer_addresses` (max 5), `normalize_il_phone()` + `orders.phone_e164`, triggers that attach a member's order and learn name/address from it, and the member RPCs `join_club()` (mandatory 21+ & marketing confirmation, phone read from `auth.users`), `claim_guest_orders()`, `get_my_customer()`, `get_my_orders()`, `set_marketing_consent()`, `delete_my_account()`. Does **not** enable sign-ups | yes |
 | `migrations/0013_customer_admin.sql` | the OWNER's view of the club: `admin_customer_stats()`, `admin_list_customers()` (searchable/filterable/paginated, never lists deleted members) and `admin_export_audience('sms'\|'email'\|'suppression')` — owner-only (`is_admin()`, not staff), no direct table access; every export is recorded in the closed `customer_exports` log. Needs 0012 first | yes |
-| `../scripts/security-test.mjs` | Live test of all of the above against your real project | — |
+| `../scripts/security-test.mjs` | Live test of all of the above against your real project, including the club probe (`USER_*` always; `MEMBER_*` optional; `--signups-enabled` after sign-ups are on) — see `docs/CUSTOMER_PERMISSIONS_AUDIT.md` | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
 

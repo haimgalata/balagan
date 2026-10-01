@@ -14,7 +14,7 @@ import { defineConfig, type PlaywrightTestConfig } from "@playwright/test";
  * browser, so no real backend or credentials are involved. Chrome (installed) is used.
  * Screenshots are git-ignored (multi-MB) and regenerated from the tag — see tests/catalog/README.md.
  */
-const PORTS = { baseline: 5190, static: 5191, supabase: 5192, live: 5193 } as const;
+const PORTS = { baseline: 5190, static: 5191, supabase: 5192, live: 5193, account: 5194 } as const;
 export const STUB_SUPABASE_URL = "https://stub.supabase.test";
 const STUB_KEY = "stub-anon-key";
 
@@ -24,9 +24,13 @@ const VIEWPORTS = {
 } as const;
 
 type Mode = keyof typeof PORTS;
+// The "account" variant is the stubbed-database build WITH the test-only club login adapter (VITE_CUSTOMER_AUTH=mock).
+// It runs ONLY tests/account/*; every other suite runs on the unchanged static/supabase/live builds and never sees it.
+const ACCOUNT_SPECS = /[\\/]tests[\\/]account[\\/]/;
 const project = (mode: Mode, vp: keyof typeof VIEWPORTS) => ({
   name: `${mode}-${vp}`,
   metadata: { mode, viewport: vp },
+  ...(mode === "account" ? { testMatch: /[\\/]tests[\\/]account[\\/].*\.spec\.ts$/ } : { testIgnore: ACCOUNT_SPECS }),
   use: {
     baseURL: `http://localhost:${PORTS[mode]}`,
     viewport: VIEWPORTS[vp],
@@ -62,6 +66,13 @@ const servers: NonNullable<PlaywrightTestConfig["webServer"]> = baselineDir
         reuseExistingServer: false,
         timeout: 60_000,
       },
+      {
+        command: `npx vite --port ${PORTS.account} --strictPort`,
+        url: `http://localhost:${PORTS.account}`,
+        env: { VITE_CATALOG_SOURCE: "supabase", VITE_SUPABASE_URL: STUB_SUPABASE_URL, VITE_SUPABASE_ANON_KEY: STUB_KEY, VITE_CUSTOMER_AUTH: "mock" },
+        reuseExistingServer: false,
+        timeout: 60_000,
+      },
       ...(withLive
         ? [{
             command: `npx vite --port ${PORTS.live} --strictPort`,
@@ -89,6 +100,7 @@ export default defineConfig({
     ? [project("baseline", "desktop"), project("baseline", "mobile")]
     : [
         project("static", "desktop"), project("static", "mobile"), project("supabase", "desktop"), project("supabase", "mobile"),
+        project("account", "desktop"), project("account", "mobile"),
         ...(withLive ? [project("live", "desktop"), project("live", "mobile")] : []),
       ],
   webServer: servers,

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { useCart } from "@/storefront/context/CartContext";
 import { useCatalog } from "@/storefront/context/CatalogContext";
@@ -6,8 +6,12 @@ import { useBusinessSettings } from "@/storefront/context/BusinessSettingsContex
 import { getCatalogConfig } from "@/storefront/lib/catalogApi";
 import { Button } from "@/shared/ui/Button";
 import { formatPrice } from "@/storefront/lib/pricing";
+import { formatLocalPhone } from "@/storefront/lib/phone";
 import { OrderSummary } from "@/checkout/OrderSummary";
-import { DetailsForm, type CustomerDetails } from "@/checkout/DetailsForm";
+import { DetailsForm, type CustomerDetails, type DetailsPrefill } from "@/checkout/DetailsForm";
+import { ClubIdentity, useClub, useClubAddresses } from "@/checkout/club";
+import { clearGuestDetails, readGuestDetails, saveGuestDetails } from "@/checkout/lib/guestMemory";
+import { CURRENT_TERMS_VERSION } from "@/checkout/lib/terms";
 import { useCheckoutValidation } from "@/checkout/useCheckoutValidation";
 import {
   createOrder,
@@ -114,6 +118,21 @@ export function CheckoutPage() {
   const [order, setOrder] = useState<CreateOrderResult | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
 
+  // Club login (null in a build without one). A member's saved details replace the form's blank start; everyone else
+  // is a guest, whose details may be remembered on THIS device (guestMemory.ts).
+  const club = useClub();
+  const member = club?.state.status === "member" ? club.state : null;
+  const addresses = useClubAddresses(member?.session.accessToken ?? null);
+  // Hold the form back until a restored session (and the member's addresses) are known, so it never flashes blank
+  // and then jumps to the saved details.
+  const clubLoading = club?.state.status === "loading" || (member !== null && addresses.status !== "ready");
+  const [memoryVersion, setMemoryVersion] = useState(0);
+  const remembered = useMemo(() => (member ? null : readGuestDetails()), [member !== null, memoryVersion]);
+  const isMember = member !== null;
+  useEffect(() => {
+    if (isMember) clearGuestDetails(); // once someone is a member, their profile is the memory
+  }, [isMember]);
+
   const belowMinimum = totalPriceCents < settings.min_order_cents;
 
   // Nothing to check out (emptied, or a direct/bookmarked visit) — nothing here for the customer to do.
@@ -139,10 +158,19 @@ export function CheckoutPage() {
     setOrderError(null);
     const idempotencyKey = getOrCreateIdempotencyKey();
 
-    void createOrder(config, items, details.paymentMethod, details, idempotencyKey)
+    const placeOrder = async () => {
+      // A member's order carries their own (fresh) token so the database attaches it to their account. If that token
+      // can't be had, the order simply goes through as a guest order (it is claimed by phone at their next login).
+      const token = member && club ? await club.getAccessToken() : null;
+      return createOrder(config, items, details.paymentMethod, details, idempotencyKey, token ?? undefined);
+    };
+
+    void placeOrder()
       .then((result) => {
         clearIdempotencyKey();
         clearCart();
+        if (member && club) void club.refreshProfile(); // the order just taught the profile their name/address
+        else saveGuestDetails(details);
         setOrder(result);
       })
       .catch((error: unknown) => {
@@ -177,12 +205,21 @@ export function CheckoutPage() {
 
   if (lines.length === 0) return null; // redirecting home
 
+  const memberPrefill: DetailsPrefill | undefined = member
+    ? { firstName: member.profile.firstName ?? "", lastName: member.profile.lastName ?? "", email: member.profile.email ?? "" }
+    : undefined;
+
   return (
     <div className="min-h-screen bg-brand-bg">
       <CheckoutHeader />
       <main className="mx-auto max-w-2xl px-4 py-8">
         {validation.phase === "failed" ? (
           <ErrorPanel onRetry={validation.revalidate} />
+        ) : clubLoading ? (
+          <FullPageState>
+            <Loader2 size={28} className="animate-spin text-brand-gold" aria-hidden="true" />
+            <p className="text-sm text-brand-text-muted">טוען…</p>
+          </FullPageState>
         ) : !validation.hasValidatedOnce ? (
           <FullPageState>
             <Loader2 size={28} className="animate-spin text-brand-gold" aria-hidden="true" />
@@ -212,7 +249,23 @@ export function CheckoutPage() {
 
             {orderError && <Notice kind="danger">{describeOrderError(orderError)}</Notice>}
 
+            <ClubIdentity />
+
             <DetailsForm
+              key={member ? `member-${member.profile.id}` : `guest-${memoryVersion}`}
+              prefill={member ? memberPrefill : remembered ?? undefined}
+              lockedPhone={member ? formatLocalPhone(member.profile.phone) : undefined}
+              savedAddresses={member ? addresses.addresses : undefined}
+              termsAlreadyAccepted={member ? member.profile.termsVersion === CURRENT_TERMS_VERSION : false}
+              rememberNote={!member}
+              onForgetSavedDetails={
+                !member && remembered
+                  ? () => {
+                      clearGuestDetails();
+                      setMemoryVersion((value) => value + 1);
+                    }
+                  : undefined
+              }
               disabled={validation.phase === "checking" || validation.blockedLines.length > 0 || belowMinimum}
               busy={submitting}
               onSubmit={(details) => {

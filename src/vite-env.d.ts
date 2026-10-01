@@ -13,6 +13,13 @@ interface ImportMetaEnv {
   readonly VITE_CATALOG_SOURCE?: "supabase" | "static";
 }
 
+/**
+ * Which customer (club) login the build includes — injected by vite.config.ts from VITE_CUSTOMER_AUTH.
+ * "off" (the default, and what production uses until a real SMS/OTP adapter is chosen) leaves the account
+ * drawer as the inert "coming soon" panel and ships none of the account code. "mock" is for e2e tests only.
+ */
+declare const __CUSTOMER_AUTH__: "off" | "mock";
+
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }

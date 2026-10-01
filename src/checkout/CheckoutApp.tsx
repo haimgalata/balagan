@@ -4,12 +4,14 @@ import { BusinessSettingsProvider } from "@/storefront/context/BusinessSettingsC
 import { CartProvider } from "@/storefront/context/CartContext";
 import { Toast } from "@/storefront/components/Toast";
 import { CheckoutPage } from "@/checkout/CheckoutPage";
+import { ClubProvider } from "@/checkout/club";
 
 /**
  * Root of `/checkout`. Loaded lazily by `src/main.tsx` only when the address is under `/checkout`, the same
  * way `/admin` is — most visits never reach checkout, so its details-form code shouldn't cost anyone just
  * browsing the catalog. Shares the same three providers `App.tsx` uses so cart/catalog/business-settings
- * state is identical to the homepage's (same localStorage, same live prices).
+ * state is identical to the homepage's (same localStorage, same live prices). `ClubProvider` adds the club-login
+ * session when this build has one (it is a pass-through otherwise — see club.tsx).
  */
 export default function CheckoutApp() {
   useEffect(() => {
@@ -29,7 +31,9 @@ export default function CheckoutApp() {
     <CatalogProvider>
       <BusinessSettingsProvider>
         <CartProvider>
-          <CheckoutPage />
+          <ClubProvider>
+            <CheckoutPage />
+          </ClubProvider>
           <Toast />
         </CartProvider>
       </BusinessSettingsProvider>

@@ -116,7 +116,13 @@ export async function createOrder(
   items: OrderItemPayload[],
   paymentMethod: PaymentMethod,
   customer: OrderCustomerPayload,
-  idempotencyKey: string
+  idempotencyKey: string,
+  /**
+   * A signed-in club member's bearer token. With it the request runs as that member, so the DATABASE attaches the
+   * order to their account (migration 0012's trigger reads auth.uid()); a customer id is never sent in the body.
+   * Without it (guests, or anyone whose profile couldn't be loaded) the request is anonymous, exactly as before.
+   */
+  memberAccessToken?: string
 ): Promise<CreateOrderResult> {
   if (config.source !== "supabase") {
     // Static/offline mode has no live database to write to.
@@ -130,7 +136,11 @@ export async function createOrder(
       method: "POST",
       headers: {
         apikey: config.anonKey,
-        ...(config.anonKey.startsWith("eyJ") ? { Authorization: `Bearer ${config.anonKey}` } : {}),
+        ...(memberAccessToken
+          ? { Authorization: `Bearer ${memberAccessToken}` }
+          : config.anonKey.startsWith("eyJ")
+            ? { Authorization: `Bearer ${config.anonKey}` }
+            : {}),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

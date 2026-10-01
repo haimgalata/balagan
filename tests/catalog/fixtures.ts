@@ -133,7 +133,7 @@ export const test = base.extend<Opts & { mode: string; vp: string }>({
       [ageVerified, savedCart, savedCartV2, catalogCache] as const
     );
     // the "supabase" variant talks to a fake host: answer its RPC with the seeded catalog (tests may override)
-    if (mode === "supabase") {
+    if (mode === "supabase" || mode === "account") {
       await page.route(RPC_URL, rpcOk());
       await page.route(STOCK_RPC_URL, stockOk());
     }

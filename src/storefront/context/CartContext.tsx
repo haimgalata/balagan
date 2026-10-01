@@ -67,10 +67,11 @@ interface CartContextValue {
    * Adds `quantity` of the option the customer chose, after confirming (server-side) that the product's
    * resulting total still fits its shared stock — see src/lib/stockApi.ts. Resolves once settled; rejected
    * checks and stock-limit refusals leave the cart unchanged and surface a toast instead of throwing. Never
-   * opens the cart — the user keeps shopping.
+   * opens the cart — the user keeps shopping. Resolves `true` only if the item was really added (the "order again"
+   * screen uses this to tell the customer exactly what made it into the cart); callers that don't care can ignore it.
    */
-  addItem: (productId: string, option: PurchaseOption, quantity?: number) => Promise<void>;
-  increment: (productId: string, option: PurchaseOption) => Promise<void>;
+  addItem: (productId: string, option: PurchaseOption, quantity?: number) => Promise<boolean>;
+  increment: (productId: string, option: PurchaseOption) => Promise<boolean>;
   decrement: (productId: string, option: PurchaseOption) => void;
   removeLine: (productId: string, option: PurchaseOption) => void;
   /** Empties the cart outright — used once a real order has actually been created from it. */
@@ -125,7 +126,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const nextToastId = useRef(0);
   /** One promise chain per product, so rapid clicks on the SAME product are checked one at a time against
    * the up-to-date cart instead of racing each other (different products run independently). */
-  const pendingByProduct = useRef<Map<string, Promise<void>>>(new Map());
+  const pendingByProduct = useRef<Map<string, Promise<boolean>>>(new Map());
 
   useEffect(() => {
     try {
@@ -155,10 +156,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       .reduce((sum, item) => sum + getLineBaseUnits(product, item.option, item.quantity), 0);
 
   /** The actual add — runs only after any earlier queued add for the SAME product has fully settled (see addItem). */
-  const performAdd = async (productId: string, option: PurchaseOption, quantity: number): Promise<void> => {
+  const performAdd = async (productId: string, option: PurchaseOption, quantity: number): Promise<boolean> => {
     const product = productsById.get(productId);
     // Only options that exist and can be bought at all (the UI disables the buttons; this is the guard).
-    if (!product || !isOptionInStock(product, option)) return;
+    if (!product || !isOptionInStock(product, option)) return false;
 
     const proposedBaseUnits = baseUnitsInCartFor(productId, product) + getLineBaseUnits(product, option, quantity);
     let results;
@@ -167,11 +168,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
     } catch {
       // Fail CLOSED: the customer must know availability was actually confirmed — never add on an unverified check.
       showToast(STOCK_CHECK_FAILED_MESSAGE, "warning");
-      return;
+      return false;
     }
     if (results.find((r) => r.productId === productId)?.available !== true) {
       showToast(STOCK_LIMIT_MESSAGE, "warning");
-      return;
+      return false;
     }
 
     const existing = itemsRef.current.find((item) => item.productId === productId && item.option === option);
@@ -180,11 +181,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
       : [...itemsRef.current, { productId, option, quantity }];
     commit(next);
     showToast(getAddToCartMessage(product.name), "success");
+    return true;
   };
 
-  const addItem = (productId: string, option: PurchaseOption, quantity = 1): Promise<void> => {
-    const queued = (pendingByProduct.current.get(productId) ?? Promise.resolve()).then(() => performAdd(productId, option, quantity));
-    const settled = queued.catch(() => undefined);
+  const addItem = (productId: string, option: PurchaseOption, quantity = 1): Promise<boolean> => {
+    const queued = (pendingByProduct.current.get(productId) ?? Promise.resolve(true)).then(() => performAdd(productId, option, quantity));
+    const settled = queued.catch(() => false);
     pendingByProduct.current.set(productId, settled);
     void settled.finally(() => {
       if (pendingByProduct.current.get(productId) === settled) pendingByProduct.current.delete(productId);

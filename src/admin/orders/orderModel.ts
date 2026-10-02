@@ -55,6 +55,8 @@ export interface OrderRow {
   subtotal_cents: number;
   delivery_fee_cents: number;
   discount_cents: number;
+  /** The coupon applied to this order (permanent snapshot), if any. */
+  coupon_code_snapshot?: string | null;
   total_cents: number;
   created_at: string;
   confirmed_at: string | null;

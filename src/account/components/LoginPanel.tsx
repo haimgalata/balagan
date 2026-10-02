@@ -10,6 +10,8 @@ const inputClasses =
 
 const RESEND_SECONDS = 30;
 const CODE_LENGTH = 6;
+// Dev-only real-database test login (`npm run dev:club:real`): the "code" step takes the test member's password instead.
+const PASSWORD_MODE = __CUSTOMER_AUTH__ === "realtest";
 
 function describeAuthError(error: unknown): string {
   const code = error instanceof CustomerAuthError ? error.code : "NETWORK";
@@ -83,6 +85,10 @@ export function LoginPanel({ onContinueAsGuest }: { onContinueAsGuest?: () => vo
   };
 
   const onCodeChange = (raw: string) => {
+    if (PASSWORD_MODE) {
+      setCode(raw);
+      return;
+    }
     const digits = raw.replace(/\D/g, "").slice(0, CODE_LENGTH);
     setCode(digits);
     if (digits.length === CODE_LENGTH) void submitCode(digits);
@@ -111,7 +117,11 @@ export function LoginPanel({ onContinueAsGuest }: { onContinueAsGuest?: () => vo
         <div className="flex flex-col gap-1.5">
           <p className="text-base font-semibold text-brand-text">הקלידו את הקוד שקיבלתם</p>
           <p className="text-sm text-brand-text-muted">
-            שלחנו הודעת SMS עם קוד בן {CODE_LENGTH} ספרות למספר <span dir="ltr">{formatLocalPhone(e164)}</span>.
+            {PASSWORD_MODE ? (
+              <>מצב בדיקה (דאטבייס אמיתי): הקלידו את סיסמת חשבון הבדיקה של <span dir="ltr">{formatLocalPhone(e164)}</span>.</>
+            ) : (
+              <>שלחנו הודעת SMS עם קוד בן {CODE_LENGTH} ספרות למספר <span dir="ltr">{formatLocalPhone(e164)}</span>.</>
+            )}
           </p>
         </div>
         <div className="flex flex-col gap-1.5">
@@ -123,13 +133,13 @@ export function LoginPanel({ onContinueAsGuest }: { onContinueAsGuest?: () => vo
             ref={codeInputRef}
             value={code}
             onChange={(event) => onCodeChange(event.target.value)}
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={CODE_LENGTH}
+            type={PASSWORD_MODE ? "password" : "text"}
+            inputMode={PASSWORD_MODE ? "text" : "numeric"}
+            autoComplete={PASSWORD_MODE ? "current-password" : "one-time-code"}
+            maxLength={PASSWORD_MODE ? undefined : CODE_LENGTH}
             dir="ltr"
             aria-invalid={error ? true : undefined}
-            className={`${inputClasses} text-center text-xl tracking-[0.5em]`}
+            className={PASSWORD_MODE ? inputClasses : `${inputClasses} text-center text-xl tracking-[0.5em]`}
             disabled={busy}
           />
           {error && (
@@ -138,7 +148,7 @@ export function LoginPanel({ onContinueAsGuest }: { onContinueAsGuest?: () => vo
             </p>
           )}
         </div>
-        <Button type="submit" size="lg" disabled={busy || code.length !== CODE_LENGTH}>
+        <Button type="submit" size="lg" disabled={busy || (PASSWORD_MODE ? code === "" : code.length !== CODE_LENGTH)}>
           {busy ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : "אישור"}
         </Button>
         <div className="flex items-center justify-between text-sm">

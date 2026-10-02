@@ -20,9 +20,12 @@ function Card({ children }: { children: ReactNode }) {
  * account drawer's panel (phone -> code -> the one mandatory confirmation for a new phone) in a drawer, so a
  * customer never leaves the checkout and the cart/form stay exactly where they were.
  */
-export function CheckoutIdentity() {
+export function CheckoutIdentity({ open: openProp, onOpenChange }: { open?: boolean; onOpenChange?: (open: boolean) => void } = {}) {
   const { state, signOut, retry } = useCustomerSession();
-  const [open, setOpen] = useState(false);
+  // The drawer can also be opened from elsewhere in checkout (the locked coupon box), so the page may own the state.
+  const [innerOpen, setInnerOpen] = useState(false);
+  const open = openProp ?? innerOpen;
+  const setOpen = onOpenChange ?? setInnerOpen;
 
   // Reaching "member" (login finished) closes the drawer; the form behind it then switches to their saved details.
   useEffect(() => {

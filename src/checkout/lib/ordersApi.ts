@@ -9,6 +9,7 @@
  */
 import type { CatalogConfig } from "@/storefront/lib/catalogApi";
 import type { PurchaseOption } from "@/storefront/types";
+import { describeCouponReason, isCouponErrorCode } from "@/checkout/lib/couponMessages";
 
 export type PaymentMethod = "cash" | "card";
 
@@ -42,6 +43,8 @@ export interface CreateOrderResult {
   paymentStatus: string;
   paymentMethod: PaymentMethod;
   totalCents: number;
+  /** What a club coupon took off (0 when none). */
+  discountCents: number;
   paymentAttemptId: string | null;
 }
 
@@ -57,8 +60,10 @@ export class OrderCreationError extends Error {
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-function toRpcPayload(items: OrderItemPayload[], paymentMethod: PaymentMethod, customer: OrderCustomerPayload) {
+function toRpcPayload(items: OrderItemPayload[], paymentMethod: PaymentMethod, customer: OrderCustomerPayload, couponCode?: string) {
   return {
+    // only the CODE is sent: the database validates it for the caller's own identity and prices it itself
+    ...(couponCode ? { coupon_code: couponCode } : {}),
     items: items.map((item) => ({ product_id: item.productId, option: item.option, quantity: item.quantity })),
     payment_method: paymentMethod,
     customer: {
@@ -95,6 +100,7 @@ interface RpcCreateOrderResult {
   payment_status: string;
   payment_method: string;
   total_cents: number;
+  discount_cents?: number;
   payment_attempt_id: string | null;
 }
 
@@ -122,7 +128,9 @@ export async function createOrder(
    * order to their account (migration 0012's trigger reads auth.uid()); a customer id is never sent in the body.
    * Without it (guests, or anyone whose profile couldn't be loaded) the request is anonymous, exactly as before.
    */
-  memberAccessToken?: string
+  memberAccessToken?: string,
+  /** A club coupon code (members only — the database refuses it for anyone else). */
+  couponCode?: string
 ): Promise<CreateOrderResult> {
   if (config.source !== "supabase") {
     // Static/offline mode has no live database to write to.
@@ -144,7 +152,7 @@ export async function createOrder(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        p_payload: toRpcPayload(items, paymentMethod, customer),
+        p_payload: toRpcPayload(items, paymentMethod, customer, couponCode),
         p_idempotency_key: idempotencyKey,
       }),
       signal: controller.signal,
@@ -166,6 +174,7 @@ export async function createOrder(
       paymentStatus: body.payment_status,
       paymentMethod: body.payment_method as PaymentMethod,
       totalCents: body.total_cents,
+      discountCents: typeof body.discount_cents === "number" ? body.discount_cents : 0,
       paymentAttemptId: body.payment_attempt_id,
     };
   } catch (error) {
@@ -191,5 +200,6 @@ const ERROR_MESSAGES: Record<string, string> = {
  * explicitly mapped (a network error, an unexpected response shape, or a validation gap that shouldn't
  * happen given the form's own checks but must still fail safely if it ever does). */
 export function describeOrderError(code: string): string {
+  if (isCouponErrorCode(code)) return describeCouponReason(code);
   return ERROR_MESSAGES[code] ?? "לא ניתן להשלים את ההזמנה כרגע. בדקו את החיבור ונסו שוב.";
 }

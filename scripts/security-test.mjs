@@ -426,6 +426,55 @@ async function clubMemberChecks({ createOrder, orderPayload }) {
 }
 
 /**
+ * Coupons (migration 0014) — read-only / refusal probes, nothing persists. Coupons are a member-only benefit: the tables are
+ * the owner's alone, the apply-coupon RPC refuses everyone who is not an active member WITHOUT revealing which codes exist,
+ * and nobody but the order functions writes redemptions. (The full eligibility / limits / lifecycle matrix runs in-process in
+ * scripts/verify-order-management.mjs; here we prove the live project's permissions match.)
+ */
+async function couponChecks() {
+  let r = await rest("GET", "coupons?select=id&limit=1", { token: adminToken });
+  if (r.status === 404 || pgCode(r) === "PGRST205" || pgCode(r) === "42P01") {
+    skipped.push("coupons (apply supabase/migrations/0014_coupons.sql, then re-run)");
+    section("Coupons  --  SKIPPED: migration 0014 is not applied yet");
+    return;
+  }
+  section("Coupons (migration 0014) — owner-only tables, member-only redemption");
+  check("the owner can read the coupon tables", r.status === 200
+    && (await rest("GET", "coupon_redemptions?select=id&limit=1", { token: adminToken })).status === 200
+    && (await rest("GET", "coupon_events?select=id&limit=1", { token: adminToken })).status === 200);
+  const who = [["anon", ANON], ...(userToken ? [["an ordinary logged-in user", userToken]] : []), ...(staffToken ? [["staff", staffToken]] : [])];
+  for (const [name, token] of who) {
+    for (const t of ["coupons", "coupon_redemptions", "coupon_events", "coupon_attempts"]) {
+      r = await rest("GET", `${t}?select=*&limit=1`, { token });
+      check(`${name} sees nothing in ${t}`, deniedOrEmpty(r), brief(r));
+    }
+    r = await rest("POST", "coupons", { token, body: { code: "ZZPROBE1", title: "x", discount_type: "percent", discount_value: 99 } });
+    check(`${name} cannot create a coupon`, refused(r), brief(r));
+    r = await rest("PATCH", "coupons?code=eq.ZZPROBE1", { token, body: { is_active: false } });
+    check(`${name} cannot edit a coupon`, refused(r) || isEmpty(r), brief(r));
+    r = await rest("POST", "coupon_redemptions", { token, body: { coupon_id: randomUUID(), order_id: randomUUID(), phone_e164: "+972500000000", discount_cents: 1, status: "redeemed" } });
+    check(`${name} cannot write a redemption`, refused(r), brief(r));
+  }
+  r = await rest("DELETE", `coupons?id=eq.${randomUUID()}`, { token: adminToken });
+  check("even the owner cannot delete a coupon (archive only)", refused(r), brief(r));
+  r = await rpc("preview_coupon", ANON, { p_code: "ZZPROBE1", p_subtotal_cents: 10000 });
+  check("anon cannot call preview_coupon()", refused(r), brief(r));
+  if (userToken) {
+    for (const code of ["ZZPROBE1", "NO-SUCH-CODE"]) {
+      r = await rpc("preview_coupon", userToken, { p_code: code, p_subtotal_cents: 10000 });
+      check(`a non-member gets COUPON_MEMBERS_ONLY for "${code}" (no hint whether the code exists)`, r.status === 200 && r.json?.valid === false && r.json?.reason === "COUPON_MEMBERS_ONLY", `HTTP ${r.status} ${r.text.slice(0, 100)}`);
+    }
+  }
+  r = await rpc("normalize_coupon_code", ANON, { p_raw: "x" });
+  check("the internal helpers are not callable by anon", refused(r), brief(r));
+  r = await rpc("coupon_evaluate", userToken || ANON, { p_code: "x", p_subtotal_cents: 1, p_delivery_fee_cents: 0, p_lock: false });
+  check("coupon_evaluate() is not reachable through the API", refused(r), brief(r));
+  r = await call("POST", `${URL_}/rest/v1/rpc/get_business_settings`, { body: {} });
+  check("the public settings expose club_offer_text (plain text or null) and nothing about coupons", r.status === 200 && "club_offer_text" in (r.json ?? {})
+    && !/coupon/i.test(JSON.stringify(Object.keys(r.json ?? {}))), `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+}
+
+/**
  * Part 3 (opt-in: --signups-enabled) — for AFTER public sign-ups are switched on. Instead of expecting self-registration
  * to be refused, proves a freshly self-registered user has no power at all. NOTE: it creates a throwaway, unconfirmed
  * user that this script cannot delete (no service-role key, by design) — remove it in Authentication -> Users.
@@ -1191,6 +1240,9 @@ async function main() {
 
   // ------------------------------------------------------------------- 5f. club (migrations 0011-0013)
   await clubPlainUserChecks();
+
+  // ------------------------------------------------------------------- 5g. coupons (migration 0014)
+  await couponChecks();
 
   // ------------------------------------------------------------------- 6. sign-ups
   if (SIGNUPS_ENABLED) {

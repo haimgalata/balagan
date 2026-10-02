@@ -9,6 +9,8 @@ import { BusinessSettingsPage } from "@/admin/settings/BusinessSettingsPage";
 import { OrdersPage } from "@/admin/orders/OrdersPage";
 import { CustomersPage } from "@/admin/customers/CustomersPage";
 import { CUSTOMERS_PATH } from "@/admin/customers/customersRoute";
+import { CouponsPage } from "@/admin/coupons/CouponsPage";
+import { COUPONS_PATH } from "@/admin/coupons/couponsRoute";
 import { ORDERS_PATH, isOrdersPath } from "@/admin/orders/ordersRoute";
 import type { AdminRole } from "@/admin/useAdminSession";
 
@@ -26,6 +28,7 @@ const NAV_ITEMS = [
   { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true, ownerOnly: true },
   { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true, ownerOnly: true },
   { label: "לקוחות", path: CUSTOMERS_PATH, enabled: true, ownerOnly: true },
+  { label: "קופונים", path: COUPONS_PATH, enabled: true, ownerOnly: true },
   { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true, ownerOnly: true },
 ] as const;
 
@@ -178,6 +181,8 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
           <ProductsPage client={client} />
         ) : path === CUSTOMERS_PATH ? (
           <CustomersPage client={client} />
+        ) : path === COUPONS_PATH ? (
+          <CouponsPage client={client} />
         ) : path === `${ADMIN_ROOT}/settings` ? (
           <BusinessSettingsPage client={client} />
         ) : (

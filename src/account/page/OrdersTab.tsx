@@ -120,6 +120,11 @@ export function OrdersTab() {
               <span className="text-brand-text-muted">{orderAddressLine(order)}</span>
               <span className="font-semibold text-brand-gold">₪{formatPrice(order.totalCents)}</span>
             </div>
+            {order.discountCents > 0 && (
+              <p className="text-xs text-brand-text-muted">
+                כולל הנחת מועדון{order.couponCode ? <> (קופון <span dir="ltr">{order.couponCode}</span>)</> : null}: ₪{formatPrice(order.discountCents)}
+              </p>
+            )}
 
             <div className="flex flex-wrap items-center gap-3">
               <Button

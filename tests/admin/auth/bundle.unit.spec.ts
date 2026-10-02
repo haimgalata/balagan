@@ -56,7 +56,9 @@ const readChunks = (outDir: string) => {
 // test-only mock adapter's token prefix.
 const ACCOUNT_ONLY = ["balagan-customer-auth", "get_my_customer", "join_club", "customer_addresses", "mock-customer-token.", "חברי מועדון בלאגן מזמינים מהר יותר", "מחוברים כחברי מועדון בלאגן",
   // the personal area (/account)
-  "set_marketing_consent", "delete_my_account", "get_my_orders", "מחיקת החשבון שלי"];
+  "set_marketing_consent", "delete_my_account", "get_my_orders", "מחיקת החשבון שלי",
+  // coupons are a club benefit: the apply-coupon request and the coupon box exist only with a club login
+  "preview_coupon", "יש לכם קוד קופון?"];
 
 test("the club login is not in a normal build at all, and the mock login can never ship", async () => {
   test.setTimeout(240_000);
@@ -106,7 +108,7 @@ test("admin code is a separate on-demand chunk; the customer bundle has none of 
     const others = assets.filter((name) => name !== entryName);
 
     // markers that exist only in admin code
-    const ADMIN_ONLY = ["balagan-admin-auth", "auth/v1", "signInWithPassword", "get_my_role", "noindex,nofollow", "כניסה לניהול", "admin_export_audience", "admin_list_customers"];
+    const ADMIN_ONLY = ["balagan-admin-auth", "auth/v1", "signInWithPassword", "get_my_role", "noindex,nofollow", "כניסה לניהול", "admin_export_audience", "admin_list_customers", "coupon_redemptions", "coupon_events"];
     for (const marker of ADMIN_ONLY) expect(entry.includes(marker), `customer bundle must not contain "${marker}"`).toBe(false);
 
     // ...and they do exist in a separate chunk that is loaded on demand

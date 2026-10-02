@@ -11,6 +11,8 @@ interface ImportMetaEnv {
    * Set to "static" to instantly roll back to the built-in catalog.
    */
   readonly VITE_CATALOG_SOURCE?: "supabase" | "static";
+  /** realtest login only (`npm run dev:club:real`): the one dedicated test member's e-mail. Never a password. */
+  readonly VITE_TEST_MEMBER_EMAIL?: string;
 }
 
 /**
@@ -18,7 +20,7 @@ interface ImportMetaEnv {
  * "off" (the default, and what production uses until a real SMS/OTP adapter is chosen) leaves the account
  * drawer as the inert "coming soon" panel and ships none of the account code. "mock" is for e2e tests only.
  */
-declare const __CUSTOMER_AUTH__: "off" | "mock";
+declare const __CUSTOMER_AUTH__: "off" | "mock" | "realtest";
 
 interface ImportMeta {
   readonly env: ImportMetaEnv;

@@ -195,7 +195,9 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
           </div>
           {order.discount_cents > 0 && (
             <div className="flex justify-between">
-              <dt className="text-brand-text-muted">הנחה</dt>
+              <dt className="text-brand-text-muted">
+                הנחה{order.coupon_code_snapshot ? <> (קופון <span dir="ltr">{order.coupon_code_snapshot}</span>)</> : null}
+              </dt>
               <dd>-{formatShekel(order.discount_cents)}</dd>
             </div>
           )}

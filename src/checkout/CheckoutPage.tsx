@@ -9,7 +9,7 @@ import { formatPrice } from "@/storefront/lib/pricing";
 import { formatLocalPhone } from "@/storefront/lib/phone";
 import { OrderSummary } from "@/checkout/OrderSummary";
 import { DetailsForm, type CustomerDetails, type DetailsPrefill } from "@/checkout/DetailsForm";
-import { ClubIdentity, useClub, useClubAddresses } from "@/checkout/club";
+import { ClubCouponBox, ClubIdentity, useClub, useClubAddresses, useClubCoupon } from "@/checkout/club";
 import { clearGuestDetails, readGuestDetails, saveGuestDetails } from "@/checkout/lib/guestMemory";
 import { CURRENT_TERMS_VERSION } from "@/checkout/lib/terms";
 import { useCheckoutValidation } from "@/checkout/useCheckoutValidation";
@@ -71,6 +71,7 @@ function SuccessPanel({ order }: { order: CreateOrderResult }) {
           ? `ההזמנה אושרה ומחכה למשלוח — התשלום (₪${formatPrice(order.totalCents)}) יתבצע במזומן במעמד המסירה.`
           : "בקרוב תתאפשר השלמת התשלום ישירות באתר."}
       </p>
+      {order.discountCents > 0 && <p className="text-sm text-brand-text-muted">כולל הנחת מועדון בסך ₪{formatPrice(order.discountCents)}.</p>}
       <p className="text-sm text-brand-text-muted">
         שאלות לגבי ההזמנה?{" "}
         <a href={STORE_PHONE_HREF} className="text-brand-gold underline underline-offset-2">
@@ -129,6 +130,14 @@ export function CheckoutPage() {
   const [memoryVersion, setMemoryVersion] = useState(0);
   const remembered = useMemo(() => (member ? null : readGuestDetails()), [member !== null, memoryVersion]);
   const isMember = member !== null;
+  // Coupons are a club benefit: `coupon` is the inert NO_COUPON in a build without a club login. The sign-in drawer is
+  // owned here so the locked coupon box can open it too.
+  const [loginOpen, setLoginOpen] = useState(false);
+  const coupon = useClubCoupon({
+    subtotalCents: totalPriceCents,
+    isMember,
+    getToken: () => (club ? club.getAccessToken() : Promise.resolve(null)),
+  });
   useEffect(() => {
     if (isMember) clearGuestDetails(); // once someone is a member, their profile is the memory
   }, [isMember]);
@@ -158,15 +167,22 @@ export function CheckoutPage() {
     setOrderError(null);
     const idempotencyKey = getOrCreateIdempotencyKey();
 
-    const placeOrder = async () => {
+    const placeOrder = async (): Promise<CreateOrderResult | null> => {
+      // Re-check the coupon right now. If it no longer holds it is dropped and the customer sees the new total and
+      // confirms again — an order is never placed for a discount the customer didn't see.
+      if (coupon.applied && !(await coupon.confirm())) {
+        setOrderError("COUPON_DROPPED");
+        return null;
+      }
       // A member's order carries their own (fresh) token so the database attaches it to their account. If that token
       // can't be had, the order simply goes through as a guest order (it is claimed by phone at their next login).
       const token = member && club ? await club.getAccessToken() : null;
-      return createOrder(config, items, details.paymentMethod, details, idempotencyKey, token ?? undefined);
+      return createOrder(config, items, details.paymentMethod, details, idempotencyKey, token ?? undefined, coupon.applied?.code);
     };
 
     void placeOrder()
       .then((result) => {
+        if (!result) return;
         clearIdempotencyKey();
         clearCart();
         if (member && club) void club.refreshProfile(); // the order just taught the profile their name/address
@@ -174,7 +190,9 @@ export function CheckoutPage() {
         setOrder(result);
       })
       .catch((error: unknown) => {
-        setOrderError(error instanceof OrderCreationError ? error.code : "NETWORK_ERROR");
+        const code = error instanceof OrderCreationError ? error.code : "NETWORK_ERROR";
+        if (code.startsWith("COUPON_")) coupon.rejectFromServer(code); // the database refused the coupon: drop it, keep the order
+        setOrderError(code);
       });
   }, [submitting, validation.phase, validation.blockedLines, belowMinimum, pending]);
 
@@ -237,7 +255,11 @@ export function CheckoutPage() {
               </Notice>
             )}
 
-            <OrderSummary changedPriceKeys={validation.changedPriceKeys} />
+            <OrderSummary
+              changedPriceKeys={validation.changedPriceKeys}
+              coupon={coupon.applied}
+              couponSlot={<ClubCouponBox coupon={coupon} offerText={settings.club_offer_text ?? null} onJoin={() => setLoginOpen(true)} />}
+            />
 
             {validation.blockedLines.length > 0 && (
               <Notice kind="danger">יש להתאים את הכמות של הפריטים המסומנים למעלה לפני שממשיכים.</Notice>
@@ -249,7 +271,7 @@ export function CheckoutPage() {
 
             {orderError && <Notice kind="danger">{describeOrderError(orderError)}</Notice>}
 
-            <ClubIdentity />
+            <ClubIdentity open={loginOpen} onOpenChange={setLoginOpen} />
 
             <DetailsForm
               key={member ? `member-${member.profile.id}` : `guest-${memoryVersion}`}

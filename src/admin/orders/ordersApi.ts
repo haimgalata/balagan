@@ -26,7 +26,7 @@ const unexpected = (e: unknown): { ok: false; error: OrderError } =>
 
 const ORDER_COLUMNS =
   "id,order_number,payment_method,order_status,payment_status,first_name,last_name,phone,email,city,street,house_number," +
-  "entrance,floor,apartment,intercom_code,delivery_notes,subtotal_cents,delivery_fee_cents,discount_cents,total_cents," +
+  "entrance,floor,apartment,intercom_code,delivery_notes,subtotal_cents,delivery_fee_cents,discount_cents,coupon_code_snapshot,total_cents," +
   "created_at,confirmed_at,status_changed_at,completed_at,cancelled_at,cancel_reason,stock_return_status";
 const ITEM_COLUMNS =
   "id,product_id,product_name_snapshot,product_brand_snapshot,option,option_label_snapshot,unit_price_cents,quantity,base_units,line_total_cents";

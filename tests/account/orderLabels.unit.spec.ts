@@ -4,7 +4,7 @@ import type { MyOrder } from "../../src/account/types";
 
 const order = (over: Partial<MyOrder> = {}): MyOrder => ({
   id: "o1", orderNumber: 1042, status: "confirmed", paymentMethod: "cash", paymentStatus: "pending", createdAt: "2026-09-20T07:00:00Z",
-  subtotalCents: 50000, deliveryFeeCents: 1500, totalCents: 51500, street: "הרצל", houseNumber: "12", entrance: "", floor: "", apartment: "",
+  subtotalCents: 50000, deliveryFeeCents: 1500, discountCents: 0, couponCode: null, totalCents: 51500, street: "הרצל", houseNumber: "12", entrance: "", floor: "", apartment: "",
   items: [{ productId: "1", name: "מרלבורו", brand: null, option: "package", optionLabel: "פקט", quantity: 2, unitPriceCents: 25000, lineTotalCents: 50000 }],
   ...over,
 });

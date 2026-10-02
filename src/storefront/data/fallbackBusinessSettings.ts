@@ -23,4 +23,5 @@ export const fallbackBusinessSettings: RpcBusinessSettings = {
   min_order_cents: 5000,
   delivery_fee_cents: 1500,
   orders_paused: false,
+  club_offer_text: null,
 };

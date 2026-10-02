@@ -66,7 +66,14 @@ export function OrderCard({ order, role, actions, now, onOpen }: OrderCardProps)
         </ul>
 
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-          <span className="font-bold text-brand-gold">{formatShekel(order.total_cents)}</span>
+          <span className="font-bold text-brand-gold">
+            {formatShekel(order.total_cents)}
+            {order.coupon_code_snapshot && (
+              <span className="ms-2 rounded border border-brand-gold/40 px-1.5 py-0.5 text-xs font-medium" title="קופון מועדון">
+                קופון <span dir="ltr">{order.coupon_code_snapshot}</span> · -{formatShekel(order.discount_cents)}
+              </span>
+            )}
+          </span>
           <span className="text-brand-text-muted">
             {PAYMENT_METHOD_LABEL[order.payment_method]}
             {order.payment_method === "cash" ? " — לגבות במסירה" : ` · ${PAYMENT_STATUS_LABEL[order.payment_status]}`}

@@ -196,6 +196,8 @@ function toOrder(value: unknown): MyOrder | null {
     createdAt: str(v.created_at) ?? "",
     subtotalCents: num(v.subtotal_cents),
     deliveryFeeCents: num(v.delivery_fee_cents),
+    discountCents: num(v.discount_cents),
+    couponCode: str(v.coupon_code),
     totalCents: num(v.total_cents),
     street: str(v.street) ?? "",
     houseNumber: str(v.house_number) ?? "",

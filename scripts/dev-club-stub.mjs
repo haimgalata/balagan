@@ -50,6 +50,32 @@ const productById = new Map(catalog.products.map((p) => [p.id, p]));
 let seq = 0;
 const newId = (prefix) => `${prefix}-${(++seq).toString(16).padStart(8, "0")}`;
 const members = new Map(); // e164 -> member
+
+// ---------------------------------------------------------------- coupons (a small stand-in for migration 0014's rules)
+// Codes to try (members only): CLUB20 = 20% up to ₪30 on orders from ₪100, once per member;
+// WELCOME25 = ₪25 off a member's FIRST order; FREESHIP = free delivery, up to 3 per member; EXPIRED10 = already over.
+const normalizeCode = (raw) => String(raw ?? "").normalize("NFKC").replace(/[\s\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "").toUpperCase();
+const coupons = new Map([
+  ["CLUB20", { title: "הנחת מועדון", type: "percent", value: 20, cap: 3000, min: 10000, perMember: 1, uses: new Map() }],
+  ["WELCOME25", { title: "ברוכים הבאים", type: "fixed", value: 2500, min: 0, firstOrderOnly: true, perMember: 1, uses: new Map() }],
+  ["FREESHIP", { title: "משלוח חינם", type: "free_delivery", min: 0, perMember: 3, uses: new Map() }],
+  ["EXPIRED10", { title: "קיץ", type: "percent", value: 10, min: 0, expired: true, uses: new Map() }],
+]);
+/** -> { ok: true, code, title, type, discount } or { ok: false, reason, min? } (the same tokens as the database). */
+function evaluateCoupon(rawCode, subtotal, member) {
+  if (!member) return { ok: false, reason: "COUPON_MEMBERS_ONLY" };
+  const code = normalizeCode(rawCode);
+  const c = coupons.get(code);
+  if (!c) return { ok: false, reason: "COUPON_INVALID" };
+  if (c.expired) return { ok: false, reason: "COUPON_EXPIRED" };
+  if (subtotal < c.min) return { ok: false, reason: "COUPON_MIN_ORDER", min: c.min };
+  if (c.firstOrderOnly && member.orders.some((o) => o.order_status !== "cancelled")) return { ok: false, reason: "COUPON_FIRST_ORDER_ONLY" };
+  if (c.perMember != null && (c.uses.get(member.phone) ?? 0) >= c.perMember) return { ok: false, reason: "COUPON_ALREADY_USED" };
+  let discount = c.type === "percent" ? Math.floor(subtotal * c.value / 100) : c.type === "fixed" ? c.value : DELIVERY_FEE_CENTS;
+  if (c.type === "percent" && c.cap) discount = Math.min(discount, c.cap);
+  if (c.type !== "free_delivery") discount = Math.min(discount, subtotal);
+  return { ok: true, code, title: c.title, type: c.type, discount };
+}
 let orderNumber = 1002; // the seeded demo orders are #1001 and #1002; new ones continue after them
 
 function makeMember(phone, extra = {}) {
@@ -141,11 +167,19 @@ const server = http.createServer((req, res) => {
         items.push({ product_id: prod.id, name: prod.name_he, brand: prod.brand, option: i.option, option_label: i.option === "package" ? prod.package.label : "יחידה", quantity: i.quantity, unit_price_cents: price, line_total_cents: price * i.quantity });
       }
       const subtotal = items.reduce((s, i) => s + i.line_total_cents, 0);
+      let coupon = null;
+      if (typeof p.coupon_code === "string" && p.coupon_code.trim() !== "") {
+        coupon = evaluateCoupon(p.coupon_code, subtotal, member);
+        if (!coupon.ok) return send(400, { message: coupon.reason + (coupon.min ? `: ${coupon.min}` : "") });
+      }
+      const discount = coupon ? coupon.discount : 0;
       const order = {
         id: newId("ord"), order_number: ++orderNumber, order_status: "confirmed", payment_method: "cash", payment_status: "pending",
-        created_at: new Date().toISOString(), subtotal_cents: subtotal, delivery_fee_cents: DELIVERY_FEE_CENTS, total_cents: subtotal + DELIVERY_FEE_CENTS,
+        discount_cents: discount, coupon_code: coupon ? coupon.code : null,
+        created_at: new Date().toISOString(), subtotal_cents: subtotal, delivery_fee_cents: DELIVERY_FEE_CENTS, total_cents: subtotal + DELIVERY_FEE_CENTS - discount,
         city: c.city, street: c.street, house_number: c.house_number, entrance: c.entrance ?? null, floor: c.floor ?? null, apartment: c.apartment ?? null, items,
       };
+      if (coupon) { const c = coupons.get(coupon.code); c.uses.set(member.phone, (c.uses.get(member.phone) ?? 0) + 1); log("coupon", coupon.code, "redeemed by", phone, "-", discount); }
       if (member) {
         // what migration 0012's triggers do: attach the order to the member, learn their name/e-mail, remember the address + terms
         member.orders.unshift(order);
@@ -154,13 +188,17 @@ const server = http.createServer((req, res) => {
         touchAddress(member, { street: c.street, house_number: c.house_number, entrance: c.entrance ?? null, floor: c.floor ?? null, apartment: c.apartment ?? null, intercom_code: c.intercom_code ?? null, notes: c.notes ?? null });
         log("order", order.order_number, "attached to member", phone);
       } else log("order", order.order_number, "GUEST order", `${c.first_name} ${c.last_name}`, c.phone);
-      return send(200, { order_id: order.id, order_number: order.order_number, order_status: "confirmed", payment_status: "pending", payment_method: "cash", total_cents: order.total_cents, payment_attempt_id: null });
+      return send(200, { order_id: order.id, order_number: order.order_number, order_status: "confirmed", payment_status: "pending", payment_method: "cash", total_cents: order.total_cents, discount_cents: discount, payment_attempt_id: null });
     }
 
     // ----- everything below needs a (mock) logged-in session
-    const needsLogin = path.startsWith("rpc/get_my_") || ["rpc/join_club", "rpc/claim_guest_orders", "rpc/set_marketing_consent", "rpc/delete_my_account"].includes(path) || path.startsWith("customer_addresses") || path.startsWith("customers");
+    const needsLogin = path.startsWith("rpc/get_my_") || ["rpc/join_club", "rpc/claim_guest_orders", "rpc/set_marketing_consent", "rpc/delete_my_account", "rpc/preview_coupon"].includes(path) || path.startsWith("customer_addresses") || path.startsWith("customers");
     if (needsLogin && !phone) return send(401, { message: "JWT invalid (the dev stub only accepts the mock login)" });
 
+    if (path === "rpc/preview_coupon") {
+      const r = evaluateCoupon(body.p_code, Number(body.p_subtotal_cents) || 0, member);
+      return send(200, r.ok ? { valid: true, code: r.code, title: r.title, discount_type: r.type, discount_cents: r.discount } : { valid: false, reason: r.reason, min_subtotal_cents: r.min ?? null });
+    }
     if (path === "rpc/get_my_customer") return send(200, member ? profileJson(member) : null);
     if (path === "rpc/get_my_orders") return send(200, member ? member.orders.slice(0, body.p_limit ?? 20) : []);
     if (path === "rpc/claim_guest_orders") return send(200, 0);

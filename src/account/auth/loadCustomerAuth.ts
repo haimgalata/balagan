@@ -10,5 +10,9 @@ export async function loadCustomerAuth(): Promise<CustomerAuth> {
     const { createMockAuth } = await import("@/account/auth/mockAuth");
     return createMockAuth();
   }
+  if (__CUSTOMER_AUTH__ === "realtest") {
+    const { createTestMemberAuth } = await import("@/account/auth/testMemberAuth");
+    return createTestMemberAuth();
+  }
   throw new CustomerAuthError("NOT_CONFIGURED");
 }

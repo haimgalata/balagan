@@ -30,7 +30,7 @@ export class CustomerAuthError extends Error {
 }
 
 export interface CustomerAuth {
-  readonly kind: "mock";
+  readonly kind: "mock" | "realtest";
   /** Starts a login for this number (sends the SMS code). */
   sendCode(phoneE164: string): Promise<void>;
   /** Completes it. Resolves with the new session, or throws `CustomerAuthError("INVALID_CODE")`. */
@@ -98,6 +98,9 @@ export interface MyOrder {
   createdAt: string;
   subtotalCents: number;
   deliveryFeeCents: number;
+  /** What a club coupon took off (0 when none) and the code that did it. */
+  discountCents: number;
+  couponCode: string | null;
   totalCents: number;
   street: string;
   houseNumber: string;

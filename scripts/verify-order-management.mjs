@@ -56,6 +56,8 @@ await db.exec(file("0012_customers.sql"));
 await db.exec(file("0012_customers.sql")); // re-runnable
 await db.exec(file("0013_customer_admin.sql"));
 await db.exec(file("0013_customer_admin.sql")); // re-runnable
+await db.exec(file("0014_coupons.sql"));
+await db.exec(file("0014_coupons.sql")); // re-runnable
 await db.exec(file("0002_rls.sql"));               // re-running 0002 must not widen is_admin()
 await db.exec(`insert into public.admin_users (user_id, role) values ('${STAFF}', 'staff');`);
 
@@ -286,8 +288,12 @@ const GUARDED_ADMIN = ["is_admin", "is_staff", "get_my_role", "expire_stale_orde
   // owner's customer tools (0013): each re-checks is_admin() (owner only) inside itself
   "admin_customer_stats", "admin_list_customers", "admin_export_audience"];
 // Member-facing (0012): each reads auth.uid() itself, returns only the caller's own data, and is revoked from anon.
-const MEMBER_RPCS = ["get_my_customer", "claim_guest_orders", "join_club", "get_my_orders", "set_marketing_consent", "delete_my_account"];
-const known = new Set([...PUBLIC_BY_DESIGN, ...GUARDED_ADMIN, ...MEMBER_RPCS]);
+const MEMBER_RPCS = ["get_my_customer", "claim_guest_orders", "join_club", "get_my_orders", "set_marketing_consent", "delete_my_account",
+  // coupons (0014): checks the caller's own membership itself, refuses everyone else; revoked from anon
+  "preview_coupon"];
+// Pure, side-effect-free helpers that must stay callable because a table CHECK runs them with the caller's privileges.
+const PURE_HELPERS = ["normalize_coupon_code"];
+const known = new Set([...PUBLIC_BY_DESIGN, ...GUARDED_ADMIN, ...MEMBER_RPCS, ...PURE_HELPERS]);
 const unknown = execFns.filter((f) => !known.has(f.name));
 check("no unreviewed function is executable by logged-in users", unknown.length === 0, unknown.map((f) => f.sig).join(", "));
 check("customer: is_admin/is_staff false, role null", (() => pr.a === false && pr.s === false && pr.r === null)());
@@ -517,6 +523,280 @@ check("every export is logged with who, what and how many — and refused ones a
 check("the log shows up in the stats as the last export", (await asOwner(`select public.admin_customer_stats() as s`)).rows[0].s.last_exports.sms.count === sms.length);
 check("withdrawing consent removes someone from the next export",
   await (async () => { await mBoth.who(`select public.set_marketing_consent(false)`); return !(await exp("sms")).some((r) => r.phone === "+972521000002") && (await exp("suppression")).some((r) => r.phone === "+972521000002"); })());
+
+// ---- coupons (migration 0014) ---------------------------------------------------------------------------------------
+console.log("\nCoupons: code normalization (pinned to src/storefront/lib/couponCode.ts by tests/account/couponCode.unit.spec.ts)");
+const nc = async (v) => (await su(`select public.normalize_coupon_code($1) as c`, [v]))[0].c;
+check("case, spaces, full-width, invisible bidi marks, NBSP are all removed/folded; 0/O and 1/I are NOT folded",
+  (await nc(" club 20 ")) === "CLUB20" && (await nc("ｃｌｕｂ２０")) === "CLUB20" && (await nc("CLUB‏20‎")) === "CLUB20"
+  && (await nc("‫welcome-25‬")) === "WELCOME-25" && (await nc("a b")) === "AB" && (await nc("0O1I")) === "0O1I" && (await nc(null)) === "");
+
+let cpn = 0;
+const mkCoupon = async (o = {}) => {
+  const c = { code: `T${++cpn}X`, title: "בדיקה", discount_type: "percent", discount_value: 20, max_discount_cents: null, min_subtotal_cents: 0,
+    starts_at: null, ends_at: null, is_active: true, max_total_redemptions: null, max_per_member: null, first_order_only: false, ...o };
+  return (await su(`insert into public.coupons (code,title,discount_type,discount_value,max_discount_cents,min_subtotal_cents,starts_at,ends_at,is_active,max_total_redemptions,max_per_member,first_order_only)
+                    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id, code`, Object.values(c)))[0];
+};
+const ITEMS = [{ product_id: "902", option: "unit", quantity: 2 }];            // subtotal 12000, delivery fee 1500
+const placeC = (who, code, { items = ITEMS, method = "cash", cust = customer, key = randomUUID(), extra = {} } = {}) =>
+  who(`select public.create_order($1::jsonb, $2::uuid) as o`, [JSON.stringify({ items, payment_method: method, customer: cust, ...(code ? { coupon_code: code } : {}), ...extra }), key]);
+const okC = async (who, code, opts) => { const r = await placeC(who, code, opts); if (!r.ok) throw new Error(`${code}: ${r.error}`); return r.rows[0].o; };
+const refused = (r, token) => !r.ok && new RegExp(`^${token}`).test(r.error);
+const redemption = async (orderId) => (await su(`select * from public.coupon_redemptions where order_id=$1`, [orderId]))[0];
+const mc = async (phone, name) => mk(phone, name, null);
+
+console.log("\nCoupons: who may use them (decided by the database, at order time)");
+await su(`insert into public.products (id, category_id, name_he, unit_price, unit_sale_enabled, unit_sale_price, track_stock, stock_base_units)
+          values ('903','00000000-0000-0000-0000-0000000000c1','במבצע',100,true,80,false,0)`);
+const elig = await mkCoupon({ code: "ELIG" });
+const cA = await mc("972522000001", "אבי"), cB = await mc("972522000002", "בני"), cC = await mc("972522000003", "גיל");
+const stock901 = await stock();
+const ordersBefore = (await su(`select count(*)::int n from public.orders`))[0].n;
+const guestTry = await placeC(asAnon, "ELIG", { items: [{ product_id: "901", option: "unit", quantity: 1 }, ...ITEMS] });
+check("a GUEST cannot redeem: COUPON_MEMBERS_ONLY, no order, stock untouched (whole transaction rolled back)",
+  refused(guestTry, "COUPON_MEMBERS_ONLY") && (await stock()) === stock901 && (await su(`select count(*)::int n from public.orders`))[0].n === ordersBefore, guestTry.error);
+check("a logged-in user who is not a member cannot", refused(await placeC(asPlain, "ELIG"), "COUPON_MEMBERS_ONLY"));
+check("an owner/staff token is not a customer either", refused(await placeC(asOwner, "ELIG"), "COUPON_MEMBERS_ONLY") && refused(await placeC(asStaff, "ELIG"), "COUPON_MEMBERS_ONLY"));
+check("a non-member learns nothing about which codes exist (same answer for a made-up code)", refused(await placeC(asPlain, "NO-SUCH-CODE"), "COUPON_MEMBERS_ONLY") && refused(await placeC(asAnon, "NO-SUCH-CODE"), "COUPON_MEMBERS_ONLY"));
+check("a member who deleted their account is refused (membership is checked live)", refused(await placeC(mGone.who, "ELIG"), "COUPON_MEMBERS_ONLY"));
+check("an unknown code is COUPON_INVALID for a member; a blank code just means no coupon", refused(await placeC(cA.who, "NOPE"), "COUPON_INVALID") && (await placeC(cA.who, "   ")).ok);
+const eo = await okC(cA.who, "ELIG");
+const eRow = await order(eo.order_id);
+check("an active member redeems: 20% of 12000 = 2400 off, delivery fee untouched, total 11100",
+  eo.discount_cents === 2400 && eo.total_cents === 11100 && eRow.discount_cents === 2400 && eRow.subtotal_cents === 12000 && eRow.delivery_fee_cents === 1500 && eRow.total_cents === 11100);
+check("the order is attached to the member and keeps a permanent snapshot of the coupon",
+  eRow.customer_id === cA.id && eRow.coupon_code_snapshot === "ELIG" && eRow.coupon_id === elig.id && eRow.coupon_snapshot.discount_type === "percent" && eRow.coupon_snapshot.discount_value === 20);
+const red = await redemption(eo.order_id);
+check("a cash order's redemption is 'redeemed' at once, keyed to the member's verified phone",
+  red.status === "redeemed" && red.redeemed_at && red.released_at === null && red.phone_e164 === "+972522000001" && red.customer_id === cA.id && red.discount_cents === 2400);
+check("a code typed sloppily (lower case, spaces) still matches", (await okC(cB.who, " el ig ")).discount_cents === 2400);
+const out = await mc("972522000009", "אורן");
+await out.who(`select public.set_marketing_consent(false)`);
+check("a member who WITHDREW marketing consent is still eligible (club membership, not consent, decides)", (await okC(out.who, "ELIG")).discount_cents === 2400);
+check("a client-sent discount/total/coupon_id is ignored", await (async () => {
+  const o = await okC(asAnon, null, { extra: { discount_cents: 99999, total_cents: 1, coupon_id: elig.id } });
+  const r = await order(o.order_id);
+  return r.discount_cents === 0 && r.total_cents === 13500 && r.coupon_id === null;
+})());
+check("an order without a coupon is unchanged (discount 0, total = subtotal + fee)", (await okC(cC.who, null)).discount_cents === 0);
+check("staff can see the coupon and the reduced total on the order they handle",
+  (await asStaff(`select coupon_code_snapshot c, discount_cents d, total_cents t from public.orders where id='${eo.order_id}'`)).rows[0].t === 11100);
+
+console.log("\nCoupons: rules");
+const tryC = async (opts, who = cA.who) => { const c = await mkCoupon(opts); return placeC(who, c.code); };
+const day = 86400e3;
+check("disabled coupon", refused(await tryC({ is_active: false }), "COUPON_DISABLED"));
+check("not started yet", refused(await tryC({ starts_at: new Date(Date.now() + day).toISOString() }), "COUPON_NOT_STARTED"));
+check("expired", refused(await tryC({ ends_at: new Date(Date.now() - 1000).toISOString() }), "COUPON_EXPIRED"));
+const minR = await tryC({ min_subtotal_cents: 20000 });
+check("minimum order: refused with the amount", refused(minR, "COUPON_MIN_ORDER: 20000"), minR.error);
+const arch = await mkCoupon({}); await su(`update public.coupons set archived_at = now() where id=$1`, [arch.id]);
+check("archived coupon behaves as unknown", refused(await placeC(cA.who, arch.code), "COUPON_INVALID"));
+check("a window that is open now works", (await tryC({ starts_at: new Date(Date.now() - day).toISOString(), ends_at: new Date(Date.now() + day).toISOString() })).ok);
+const cap = await mkCoupon({ discount_value: 50, max_discount_cents: 1000 });
+check("percent coupon respects the maximum discount (50% of 12000 capped at 1000)", (await okC(cA.who, cap.code)).discount_cents === 1000);
+const fixBig = await mkCoupon({ discount_type: "fixed", discount_value: 500000 });
+const fb = await okC(cA.who, fixBig.code);
+check("fixed coupon larger than the subtotal is clamped: discount 12000, total = delivery fee 1500", fb.discount_cents === 12000 && fb.total_cents === 1500);
+const fix = await mkCoupon({ discount_type: "fixed", discount_value: 1000 });
+check("fixed coupon: 1000 off", (await okC(cA.who, fix.code)).discount_cents === 1000);
+const free = await mkCoupon({ discount_type: "free_delivery", discount_value: null });
+const fo = await okC(cA.who, free.code);
+const foRow = await order(fo.order_id);
+check("free delivery: discount equals the fee, the order still records the fee that was waived, total = subtotal",
+  fo.discount_cents === 1500 && fo.total_cents === 12000 && foRow.delivery_fee_cents === 1500 && foRow.discount_cents === 1500);
+await su(`update public.business_settings set delivery_fee_cents = 0 where id = 1`);
+check("free delivery with a 0 fee gives no benefit and is refused (a use is never burned for nothing)", refused(await placeC(cA.who, free.code), "COUPON_NO_BENEFIT"));
+await su(`update public.business_settings set delivery_fee_cents = 1500 where id = 1`);
+const stack = await mkCoupon({});
+const so = await okC(cA.who, stack.code, { items: [{ product_id: "903", option: "unit", quantity: 1 }] });
+check("a coupon applies on top of an item already on sale (80 -> 20% of 8000 = 1600)", so.discount_cents === 1600);
+check("BELOW_MINIMUM_ORDER still looks at the subtotal before the discount", await (async () => {
+  await su(`update public.business_settings set min_order_cents = 12000 where id = 1`);
+  const ok = (await placeC(cA.who, elig.code)).ok;
+  const below = refused(await placeC(cA.who, elig.code, { items: [{ product_id: "902", option: "unit", quantity: 1 }] }), "BELOW_MINIMUM_ORDER");
+  await su(`update public.business_settings set min_order_cents = 0 where id = 1`);
+  return ok && below;
+})());
+
+console.log("\nCoupons: independent usage limits");
+const pm1 = await mkCoupon({ max_per_member: 1 });
+const a1 = await okC(cA.who, pm1.code);
+check("per-member limit 1: the same member is refused the second time", refused(await placeC(cA.who, pm1.code), "COUPON_ALREADY_USED"));
+check("...but another member can still use it (no total limit)", (await placeC(cB.who, pm1.code)).ok && (await placeC(cC.who, pm1.code)).ok);
+const pm3 = await mkCoupon({ max_per_member: 3 });
+for (let i = 0; i < 3; i++) await okC(cA.who, pm3.code);
+check("per-member limit 3 (not hard-coded to 1): three uses, the fourth is refused", refused(await placeC(cA.who, pm3.code), "COUPON_ALREADY_USED"));
+const tot2 = await mkCoupon({ max_total_redemptions: 2 });
+const t1 = await okC(cA.who, tot2.code); const t2 = await okC(cB.who, tot2.code);
+check("total limit 2 (no per-member limit): the third customer is refused COUPON_EXHAUSTED", refused(await placeC(cC.who, tot2.code), "COUPON_EXHAUSTED"));
+check("with no per-member limit the same member may use it until the total runs out", (await placeC(cA.who, tot2.code)).error?.startsWith("COUPON_EXHAUSTED") === true);
+const both = await mkCoupon({ max_total_redemptions: 100, max_per_member: 1 });
+check("both limits together (100 total, 1 per member): second use by one member refused, others fine",
+  (await placeC(cA.who, both.code)).ok && refused(await placeC(cA.who, both.code), "COUPON_ALREADY_USED") && (await placeC(cB.who, both.code)).ok);
+
+console.log("\nCoupons: first order only");
+const fst = await mkCoupon({ code: "WELCOME25", first_order_only: true });
+const cF = await mc("972522000005", "פנינה");
+const f1 = await okC(cF.who, "WELCOME25");
+check("a member with no earlier order can use a first-order coupon", f1.discount_cents === 2400);
+check("...but not on a second order (any live earlier order counts)", refused(await placeC(cF.who, "WELCOME25"), "COUPON_FIRST_ORDER_ONLY"));
+const guestFirst = await okC(asAnon, null, { cust: { ...customer, phone: "052-200-0007" } });
+const cG = await mc("972522000007", "גלית");
+check("a guest order placed earlier with the same phone counts (the join claimed it)", (await order(guestFirst.order_id)).customer_id === cG.id
+  && refused(await placeC(cG.who, "WELCOME25"), "COUPON_FIRST_ORDER_ONLY"));
+await su(`select set_config('request.jwt.claim.sub','',false)`);
+await tr(asStaff, f1.order_id, "confirmed", "cancelled", "בדיקה");
+check("a cancelled earlier order does not count", (await placeC(cF.who, "WELCOME25")).ok);
+
+console.log("\nCoupons: cancelling gives the use back, history is kept");
+const canc = await mkCoupon({ max_total_redemptions: 1 });
+const c1 = await okC(cA.who, canc.code);
+check("the only use is taken", refused(await placeC(cB.who, canc.code), "COUPON_EXHAUSTED"));
+const st0 = await stock();
+const c1t = await tr(asStaff, c1.order_id, "confirmed", "cancelled", "ביטול");
+const r1 = await redemption(c1.order_id);
+check("cancelled before dispatch: released with the reason, history kept (redeemed_at and released_at both set)",
+  c1t.ok && r1.status === "released" && r1.released_reason === "order_cancelled_before_dispatch" && r1.redeemed_at && r1.released_at && r1.reserved_at);
+const c2 = await okC(cB.who, canc.code);
+check("the quota came back: another member can now use the coupon", c2.discount_cents === 2400);
+for (const [a, b] of [["confirmed", "preparing"], ["preparing", "out_for_delivery"]]) await tr(asStaff, c2.order_id, a, b);
+await tr(asStaff, c2.order_id, "out_for_delivery", "cancelled", "אף אחד לא פתח");
+check("cancelled after dispatch: released with its own reason", (await redemption(c2.order_id)).released_reason === "order_cancelled_after_dispatch");
+check("the cancelled order keeps its discount and snapshot (history is not rewritten)", (await order(c2.order_id)).discount_cents === 2400 && (await order(c2.order_id)).coupon_code_snapshot === canc.code);
+check("cancelling again does not double anything", (await tr(asStaff, c2.order_id, "out_for_delivery", "cancelled", "x")).ok && (await su(`select count(*)::int n from public.coupon_redemptions where order_id=$1`, [c2.order_id]))[0].n === 1);
+check("the owner reopening a completed order and cancelling it also releases", await (async () => {
+  const k = await mkCoupon({ max_total_redemptions: 1 });
+  const o = await okC(cA.who, k.code);
+  for (const [a, b] of [["confirmed", "preparing"], ["preparing", "out_for_delivery"], ["out_for_delivery", "completed"]]) await tr(asStaff, o.order_id, a, b);
+  await tr(asOwner, o.order_id, "completed", "out_for_delivery");
+  await tr(asStaff, o.order_id, "out_for_delivery", "cancelled", "בדיקה");
+  return (await redemption(o.order_id)).status === "released" && (await placeC(cB.who, k.code)).ok;
+})());
+
+console.log("\nCoupons: card orders (reserve -> redeem / release)");
+const cardC = await mkCoupon({ max_total_redemptions: 1 });
+const stockR = async () => (await su(`select stock_reserved_units s from public.products where id='901'`))[0].s;
+const reservedBefore = await stockR();
+const k1 = await okC(cA.who, cardC.code, { method: "card", items: [{ product_id: "901", option: "unit", quantity: 1 }, ...ITEMS] });
+const k1r = await redemption(k1.order_id);
+check("a card order RESERVES the coupon use; the payment attempt is for the discounted total",
+  k1.order_status === "pending" && k1r.status === "reserved" && k1r.redeemed_at === null && k1.discount_cents === 4400 && k1.total_cents === 22000 + 1500 - 4400
+  && Number((await su(`select amount_cents from public.payment_attempts where order_id=$1`, [k1.order_id]))[0].amount_cents) === k1.total_cents, JSON.stringify([k1, k1r]));
+check("a live reservation holds the quota (second member refused)", refused(await placeC(cB.who, cardC.code, { method: "card" }), "COUPON_EXHAUSTED"));
+await su(`update public.orders set reserved_until = now() - interval '1 minute' where id=$1`, [k1.order_id]);
+const k2 = await okC(cB.who, cardC.code, { method: "card" });
+check("an abandoned hold (past reserved_until, sweep not run) no longer holds the quota", k2.order_status === "pending");
+await su(`select public.release_expired_order($1)`, [k1.order_id]);
+const k1x = await redemption(k1.order_id);
+check("the expiry sweep releases it: expired order, redemption released 'reservation_expired', stock reservation back",
+  (await order(k1.order_id)).order_status === "expired" && k1x.status === "released" && k1x.released_reason === "reservation_expired" && (await stockR()) === reservedBefore);
+await su(`select set_config('request.jwt.claim.sub','',false)`);
+const attempt = async (orderId) => (await su(`select id from public.payment_attempts where order_id=$1`, [orderId]))[0].id;
+await su(`select public.confirm_payment($1::uuid, 'evt-k2', 'failed')`, [await attempt(k2.order_id)]);
+check("a failed payment releases the reservation ('payment_failed')", (await redemption(k2.order_id)).status === "released" && (await redemption(k2.order_id)).released_reason === "payment_failed");
+const k3 = await okC(cC.who, cardC.code, { method: "card" });
+await su(`select public.confirm_payment($1::uuid, 'evt-k3', 'succeeded')`, [await attempt(k3.order_id)]);
+check("a successful payment redeems it and confirms the order", (await redemption(k3.order_id)).status === "redeemed" && (await order(k3.order_id)).order_status === "confirmed");
+await su(`select public.confirm_payment($1::uuid, 'evt-k1', 'succeeded')`, [await attempt(k1.order_id)]);
+const k1late = await redemption(k1.order_id);
+check("a LATE paid webhook for an expired order is honored (the customer really paid the discounted amount) and the release history stays",
+  k1late.status === "redeemed" && k1late.released_reason === "reservation_expired" && (await order(k1.order_id)).payment_status === "paid");
+check("a repeated webhook changes nothing", (await su(`select public.confirm_payment($1::uuid, 'evt-k1', 'succeeded') as r`, [await attempt(k1.order_id)]))[0].r.already_processed === true);
+
+console.log("\nCoupons: retries and races");
+const idem = await mkCoupon({ max_per_member: 1 });
+const key = randomUUID();
+const i1 = await okC(cA.who, idem.code, { key }), i2 = await okC(cA.who, idem.code, { key });
+check("a retried request (same idempotency key) returns the SAME order with its discount and creates no second redemption",
+  i1.order_id === i2.order_id && i2.discount_cents === i1.discount_cents && i1.discount_cents > 0
+  && (await su(`select count(*)::int n from public.coupon_redemptions where coupon_id=$1`, [idem.id]))[0].n === 1);
+check("one redemption per order is enforced by the database", !(await db.query(`insert into public.coupon_redemptions (coupon_id, order_id, phone_e164, discount_cents, status) values ($1,$2,'+972500000000',5,'reserved')`, [idem.id, i1.order_id]).then(() => true, () => false)));
+check("the orders table cannot be made inconsistent (coupon without snapshot / discount without coupon)",
+  !(await db.query(`update public.orders set coupon_id = null where id=$1`, [i1.order_id]).then(() => true, () => false))
+  && !(await db.query(`update public.orders set discount_cents = 5 where id=$1`, [guestFirst.order_id]).then(() => true, () => false)));
+
+console.log("\nCoupons: per-member limit follows the verified PHONE (not the account id)");
+const phoneC = await mkCoupon({ max_per_member: 1 });
+const cX = await mc("972522000011", "אילן");
+const x1 = await okC(cX.who, phoneC.code);
+await su(`delete from public.customers where id=$1`, [cX.id]);
+const xr = await redemption(x1.order_id);
+check("deleting the customer row keeps the ledger (customer_id nulled, phone kept)", xr.customer_id === null && xr.phone_e164 === "+972522000011");
+const cY = await mc("972522000011", "אילן שוב");
+check("a brand-new account with the same phone is still counted: COUPON_ALREADY_USED", refused(await placeC(cY.who, phoneC.code), "COUPON_ALREADY_USED"));
+check("a coupon with redemptions cannot be deleted (history stays trustworthy)", !(await db.query(`delete from public.coupons where id=$1`, [phoneC.id]).then(() => true, () => false)));
+
+console.log("\nCoupons: the owner's table access, locks and audit trail");
+const ownIns = await asOwner(`insert into public.coupons (code,title,discount_type,discount_value) values ('OWNER1','בעלים','percent',10) returning id`);
+check("the owner can create a coupon through the table API", ownIns.ok, ownIns.error);
+for (const [who, name] of [[asStaff, "staff"], [asPlain, "a plain user"], [cA.who, "a club member"], [asAnon, "anon"]]) {
+  const rd = await who(`select 1 from public.coupons`), rr = await who(`select 1 from public.coupon_redemptions`), re = await who(`select 1 from public.coupon_events`);
+  const wr = await who(`insert into public.coupons (code,title,discount_type,discount_value) values ('HACK1','x','percent',99)`);
+  const att = await who(`select 1 from public.coupon_attempts`);
+  check(`${name} cannot read coupons / redemptions / events, cannot create or read attempts`,
+    (!rd.ok || rd.rows.length === 0) && (!rr.ok || rr.rows.length === 0) && (!re.ok || re.rows.length === 0) && !wr.ok && !att.ok, JSON.stringify({ rd: rd.rows?.length, rr: rr.rows?.length, wr: wr.error }));
+}
+check("the owner reads redemptions and events but cannot write or delete them or delete a coupon",
+  (await asOwner(`select 1 from public.coupon_redemptions`)).rows.length > 5 && (await asOwner(`select 1 from public.coupon_events`)).rows.length > 0
+  && !(await asOwner(`update public.coupon_redemptions set status='released' where true`)).ok
+  && !(await asOwner(`delete from public.coupon_events`)).ok && !(await asOwner(`delete from public.coupons where code='OWNER1'`)).ok);
+const badInserts = [["lower-case code", `'abc','x','percent',10`], ["too short", `'AB','x','percent',10`], ["Hebrew in the code", `'קוד123','x','percent',10`],
+  ["percent above 100", `'BAD1','x','percent',101`], ["percent below 1", `'BAD2','x','percent',0`], ["free delivery with a value", `'BAD3','x','free_delivery',5`],
+  ["fixed without a value", `'BAD4','x','fixed',null`], ["blank title", `'BAD5',' ','percent',10`]];
+for (const [name, vals] of badInserts) check(`the database rejects: ${name}`, !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value) values (${vals})`)).ok);
+check("the database rejects: duplicate code, cap on a fixed coupon, zero limits, start after end",
+  !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value) values ('ELIG','x','percent',5)`)).ok
+  && !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value,max_discount_cents) values ('BAD6','x','fixed',100,100)`)).ok
+  && !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value,max_total_redemptions) values ('BAD7','x','percent',5,0)`)).ok
+  && !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value,max_per_member) values ('BAD8','x','percent',5,0)`)).ok
+  && !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value,starts_at,ends_at) values ('BAD9','x','percent',5, now() + interval '2 days', now() + interval '1 day')`)).ok);
+check("the code can never be edited", /CODE_LOCKED/.test((await asOwner(`update public.coupons set code='ELIG2' where code='ELIG'`)).error ?? ""));
+check("after the first redemption the discount type/value are locked, but limits/dates/active/title still editable",
+  /COUPON_LOCKED/.test((await asOwner(`update public.coupons set discount_value=50 where code='ELIG'`)).error ?? "")
+  && /COUPON_LOCKED/.test((await asOwner(`update public.coupons set discount_type='fixed', discount_value=100 where code='ELIG'`)).error ?? "")
+  && (await asOwner(`update public.coupons set max_per_member=5, title='כותרת חדשה' where code='ELIG' returning 1`)).rows.length === 1);
+check("before any redemption the value is still editable", (await asOwner(`update public.coupons set discount_value=15 where code='OWNER1' returning 1`)).rows.length === 1);
+await asOwner(`update public.coupons set is_active=false where code='OWNER1'`);
+await asOwner(`update public.coupons set is_active=true where code='OWNER1'`);
+await asOwner(`update public.coupons set archived_at=now() where code='OWNER1'`);
+const evs = await su(`select kind, actor_label, changes from public.coupon_events where code='OWNER1' order by id`);
+check("audit trail: created / updated / disabled / enabled / archived, each with who and before-after",
+  evs.map((e) => e.kind).join() === "created,updated,disabled,enabled,archived" && evs.every((e) => e.actor_label === "owner@x.test")
+  && evs[1].changes.discount_value.from === 10 && evs[1].changes.discount_value.to === 15);
+check("an archived code stays reserved (cannot be re-created)", !(await asOwner(`insert into public.coupon_events (coupon_id, code, kind, actor_label) values (gen_random_uuid(),'x','created','x')`)).ok
+  && !(await asOwner(`insert into public.coupons (code,title,discount_type,discount_value) values ('OWNER1','again','percent',10)`)).ok);
+
+console.log("\nCoupons: preview_coupon (the checkout's apply button)");
+const pv = (who, code, sub = 12000) => who(`select public.preview_coupon($1,$2) as p`, [code, sub]);
+const pvOk = (await pv(cA.who, "ELIG")).rows[0].p;
+check("a member gets a valid preview with the discount (informational): 20% of 12000", pvOk.valid === true && pvOk.discount_cents === 2400 && pvOk.code === "ELIG", JSON.stringify(pvOk));
+check("anon cannot call it at all; a non-member gets COUPON_MEMBERS_ONLY (and nothing about the code)",
+  !(await pv(asAnon, "ELIG")).ok && (await pv(asPlain, "ELIG")).rows[0].p.reason === "COUPON_MEMBERS_ONLY" && (await pv(asPlain, "NOPE")).rows[0].p.reason === "COUPON_MEMBERS_ONLY");
+check("refusals come back as data: unknown, min order (with the amount)",
+  (await pv(cA.who, "NOPE")).rows[0].p.reason === "COUPON_INVALID"
+  && (await (async () => { const c = await mkCoupon({ min_subtotal_cents: 30000 }); const p = (await pv(cB.who, c.code)).rows[0].p; return p.reason === "COUPON_MIN_ORDER" && p.min_subtotal_cents === 30000; })()));
+check("a preview never creates a redemption", await (async () => { const n0 = (await su(`select count(*)::int n from public.coupon_redemptions`))[0].n; await pv(cA.who, "ELIG"); return (await su(`select count(*)::int n from public.coupon_redemptions`))[0].n === n0; })());
+const cT = await mc("972522000020", "טל");
+for (let i = 0; i < 10; i++) await pv(cT.who, `GUESS${i}`);
+check("guessing is throttled: after 10 wrong codes even the right one is refused for a while",
+  (await pv(cT.who, "ELIG")).rows[0].p.reason === "COUPON_TOO_MANY_ATTEMPTS" && (await pv(cA.who, "ELIG")).rows[0].p.valid === true);
+
+console.log("\nCoupons: what customers and the storefront see");
+const myOrders = (await cA.who(`select public.get_my_orders(50) as o`)).rows[0].o;
+const mineE = myOrders.find((x) => x.id === eo.order_id);
+check("get_my_orders shows the discount and the coupon code, and still no internal columns",
+  mineE.discount_cents === 2400 && mineE.coupon_code === "ELIG" && mineE.total_cents === 11100 && myOrders.every((x) => !("coupon_id" in x) && !("coupon_snapshot" in x) && !("cancel_reason" in x) && !("customer_id" in x)));
+const pubSettings = async () => (await asAnon(`select public.get_business_settings() as s`)).rows[0].s;
+check("the public settings carry club_offer_text (null until the owner sets it)", "club_offer_text" in (await pubSettings()) && (await pubSettings()).club_offer_text === null);
+check("only the owner sets it; it is plain text up to 120 chars, never empty",
+  (await asOwner(`update public.business_settings set club_offer_text='חברי מועדון: 10% הנחה' where id=1 returning 1`)).rows.length === 1
+  && (await pubSettings()).club_offer_text === "חברי מועדון: 10% הנחה"
+  && ((await asStaff(`update public.business_settings set club_offer_text='x' where id=1 returning 1`)).rows ?? []).length === 0
+  && !(await asOwner(`update public.business_settings set club_offer_text='   ' where id=1`)).ok
+  && !(await asOwner(`update public.business_settings set club_offer_text='${"א".repeat(121)}' where id=1`)).ok
+  && (await asOwner(`update public.business_settings set club_offer_text=null where id=1 returning 1`)).rows.length === 1);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

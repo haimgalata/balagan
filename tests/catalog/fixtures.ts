@@ -221,8 +221,14 @@ const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 export const rowTexts = async (drawer: import("@playwright/test").Locator) =>
   (await drawer.locator("li").allInnerTexts()).map(squash);
 
-/** The ₪ total shown in the drawer footer (null when the cart is empty). */
+/** The ₪ items subtotal shown in the drawer footer — what the legacy-parity specs always meant by "the total" (null when the cart is empty). */
 export async function drawerTotal(drawer: import("@playwright/test").Locator): Promise<number | null> {
+  const match = /סכום ביניים ₪([0-9.]+)/.exec(squash(await drawer.innerText()));
+  return match ? Number(match[1]) : null;
+}
+
+/** The amount actually due shown in the drawer footer: items + delivery (null when the cart is empty). */
+export async function drawerPayable(drawer: import("@playwright/test").Locator): Promise<number | null> {
   const match = /סה"כ לתשלום ₪([0-9.]+)/.exec(squash(await drawer.innerText()));
   return match ? Number(match[1]) : null;
 }

@@ -12,6 +12,7 @@ import { CouponFormDrawer } from "@/admin/coupons/CouponFormDrawer";
 import { CouponDetailDrawer } from "@/admin/coupons/CouponDetailDrawer";
 import { useCouponManager } from "@/admin/coupons/useCouponManager";
 import { formatDateTime } from "@/admin/orders/orderModel";
+import { MobileLabel, RT_BODY, RT_CELL, RT_HEAD, RT_ROW, RT_TABLE } from "@/admin/shared/responsiveTable";
 
 const inputClasses =
   "rounded-lg border border-brand-border bg-brand-bg px-3 py-2 text-sm text-brand-text outline-none transition-colors focus-visible:border-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:opacity-50";
@@ -217,8 +218,8 @@ export function CouponsPage({ client }: { client: SupabaseClient }) {
 
       {data && visible.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-brand-border bg-brand-bg-elevated">
-          <table className="w-full min-w-[44rem] text-sm">
-            <thead className="border-b border-brand-border text-start text-xs text-brand-text-muted">
+          <table className={RT_TABLE}>
+            <thead className={`border-b border-brand-border text-start text-xs text-brand-text-muted ${RT_HEAD}`}>
               <tr>
                 <th className="px-3 py-2 text-start font-medium">קוד</th>
                 <th className="px-3 py-2 text-start font-medium">שם</th>
@@ -229,23 +230,37 @@ export function CouponsPage({ client }: { client: SupabaseClient }) {
                 <th className="px-3 py-2" />
               </tr>
             </thead>
-            <tbody>
+            <tbody className={RT_BODY}>
               {visible.map((c) => {
                 const usage = data.usage.get(c.id) ?? EMPTY_USAGE;
                 const status = couponStatus(c, usage);
                 return (
-                  <tr key={c.id} className="border-b border-brand-border last:border-0" data-testid="coupon-row">
-                    <td className="px-3 py-2">
+                  <tr key={c.id} className={`border-b border-brand-border last:border-0 ${RT_ROW}`} data-testid="coupon-row">
+                    <td className={RT_CELL}>
+                      <MobileLabel>קוד</MobileLabel>
                       <code dir="ltr" className="font-semibold text-brand-gold">{c.code}</code>
                     </td>
-                    <td className="px-3 py-2 text-brand-text">{c.title}</td>
-                    <td className="px-3 py-2 text-brand-text-muted">{describeCoupon(c)}</td>
-                    <td className="px-3 py-2">
+                    <td className={`${RT_CELL} text-brand-text`}>
+                      <MobileLabel>שם</MobileLabel>
+                      <span>{c.title}</span>
+                    </td>
+                    <td className={`${RT_CELL} text-brand-text-muted max-md:flex-col max-md:items-start max-md:gap-0.5`}>
+                      <MobileLabel>ההטבה</MobileLabel>
+                      <span>{describeCoupon(c)}</span>
+                    </td>
+                    <td className={RT_CELL}>
+                      <MobileLabel>סטטוס</MobileLabel>
                       <span className={`rounded-full border px-2 py-0.5 text-xs ${STATUS_TONE[status]}`}>{STATUS_LABEL[status]}</span>
                     </td>
-                    <td className="px-3 py-2 text-brand-text">{formatUsage(c, usage)}</td>
-                    <td className="px-3 py-2 text-brand-text-muted">{formatDateTime(c.created_at)}</td>
-                    <td className="px-3 py-2 text-end">
+                    <td className={`${RT_CELL} text-brand-text`}>
+                      <MobileLabel>שימושים</MobileLabel>
+                      <span>{formatUsage(c, usage)}</span>
+                    </td>
+                    <td className={`${RT_CELL} text-brand-text-muted`}>
+                      <MobileLabel>נוצר</MobileLabel>
+                      <span>{formatDateTime(c.created_at)}</span>
+                    </td>
+                    <td className={`${RT_CELL} text-end max-md:justify-end max-md:pt-2`}>
                       <Button type="button" size="sm" variant="outline" onClick={() => setDetailId(c.id)} aria-label={`פרטי הקופון ${c.code}`}>
                         פרטים
                       </Button>

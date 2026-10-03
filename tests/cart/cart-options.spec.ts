@@ -1,4 +1,4 @@
-import { test, expect, gotoReady, cartBadge, openCart, rowTexts, drawerTotal, readLocalStorage, buildRpcCatalog, RPC_URL, rpcOk, V2_CART_KEY, LEGACY_CART_KEY } from "../catalog/fixtures";
+import { test, expect, gotoReady, cartBadge, openCart, rowTexts, drawerTotal, drawerPayable, readLocalStorage, buildRpcCatalog, RPC_URL, rpcOk, V2_CART_KEY, LEGACY_CART_KEY } from "../catalog/fixtures";
 import type { Locator, Page } from "@playwright/test";
 
 /** The card of a product by its (unique) Hebrew name. */
@@ -30,6 +30,27 @@ test.describe("the customer explicitly chooses unit or package", () => {
     expect(rows[0]).toContain("1 × פקט (₪510 ₪500)"); // regular struck through, sale shown
     expect(rows[0]).toContain("מבצע -₪10");
     expect(await drawerTotal(drawer)).toBe(500);
+  });
+
+  test("a package on sale reads as regular -> מבצע -> final, and the amount due includes delivery", async ({ page }) => {
+    await gotoReady(page);
+    await card(page, "מרלבורו אדום").getByRole("button", { name: "פקט", exact: true }).click();
+    await expect.poll(() => cartBadge(page)).toBe("1");
+    const drawer = await openCart(page);
+    const line = drawer.locator("li").first();
+    const row = (await rowTexts(drawer))[0];
+    // the story, once: unit price struck + sale, the saving, then ONE final price preceded by the struck regular total
+    expect(row).toContain("1 × פקט (₪510 ₪500)");
+    await expect(line.locator("s")).toHaveText("₪510");
+    expect(row).toContain("מבצע -₪10");
+    expect(row.match(/₪500/g)?.length, "the line total is not printed twice").toBe(2); // unit price + final price
+    // the footer adds up: items + delivery = what is due
+    const totals = drawer.getByTestId("order-totals");
+    await expect(totals).toContainText(/סכום ביניים\s*₪500/);
+    await expect(totals).toContainText("כולל חיסכון של ₪10 במבצעים");
+    await expect(totals.getByTestId("delivery-line")).toContainText(/משלוח\s*₪15/);
+    expect(await drawerTotal(drawer)).toBe(500);
+    expect(await drawerPayable(drawer)).toBe(515);
   });
 
   test("2 units + 1 package = 3 purchase items, as two independent lines", async ({ page }) => {

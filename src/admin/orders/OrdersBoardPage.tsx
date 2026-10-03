@@ -104,12 +104,12 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
         <ConnectionBadge connection={connection} />
         <div className="flex items-center gap-2">
           {alerts.soundOn ? (
-            <Button size="sm" variant="secondary" onClick={alerts.toggleMute} aria-pressed={alerts.muted}>
+            <Button size="sm" variant="secondary" onClick={alerts.toggleMute} aria-pressed={alerts.muted} className="max-sm:!whitespace-normal max-sm:text-start">
               {alerts.muted ? <BellOff size={16} aria-hidden="true" /> : <BellRing size={16} aria-hidden="true" />}
               {alerts.muted ? "מושתק — להפעלת צליל" : "השתקה"}
             </Button>
           ) : (
-            <Button size="sm" onClick={alerts.startShift}>
+            <Button size="sm" onClick={alerts.startShift} className="max-sm:!whitespace-normal max-sm:text-start">
               <BellRing size={16} aria-hidden="true" />
               התחלת משמרת (הפעלת צליל)
             </Button>

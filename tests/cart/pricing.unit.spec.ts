@@ -7,6 +7,7 @@ import {
   getOptionBaseUnits,
   getOptionLabel,
   getOptionPricing,
+  getPayableTotalCents,
   getSavingsCents,
   isOptionInStock,
   toCents,
@@ -154,5 +155,22 @@ test.describe("getOptionBaseUnits / getLineBaseUnits", () => {
     const total = getLineBaseUnits(p, "package", 1) + getLineBaseUnits(p, "unit", 2);
     expect(total).toBe(12);
     expect(total).toBe(getLineBaseUnits(p, "unit", 12));
+  });
+});
+
+test.describe("getPayableTotalCents (what the customer sees as due) mirrors the order total: subtotal + delivery - discount", () => {
+  test("items plus delivery, with no coupon", () => {
+    expect(getPayableTotalCents({ subtotalCents: 50000, deliveryFeeCents: 1500 })).toBe(51500);
+    expect(getPayableTotalCents({ subtotalCents: 50000, deliveryFeeCents: 0 })).toBe(50000);
+  });
+  test("a percent / fixed coupon comes off the items; delivery stays", () => {
+    expect(getPayableTotalCents({ subtotalCents: 50000, deliveryFeeCents: 1500, couponDiscountCents: 10000 })).toBe(41500);
+    expect(getPayableTotalCents({ subtotalCents: 12000, deliveryFeeCents: 1500, couponDiscountCents: 12000 }), "fixed coupon clamped to the items: only delivery is due").toBe(1500);
+  });
+  test("a free-delivery coupon waives the fee (its discount IS the fee) and nothing more", () => {
+    expect(getPayableTotalCents({ subtotalCents: 50000, deliveryFeeCents: 1500, couponDiscountCents: 1500, freeDelivery: true })).toBe(50000);
+  });
+  test("never negative", () => {
+    expect(getPayableTotalCents({ subtotalCents: 0, deliveryFeeCents: 0, couponDiscountCents: 500 })).toBe(0);
   });
 });

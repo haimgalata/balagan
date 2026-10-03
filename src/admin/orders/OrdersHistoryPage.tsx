@@ -1,3 +1,4 @@
+import { MobileLabel, RT_BODY, RT_CELL, RT_HEAD, RT_ROW, RT_TABLE } from "@/admin/shared/responsiveTable";
 import { useCallback, useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ChevronRight, ChevronLeft, Loader2, Search } from "lucide-react";
@@ -78,7 +79,7 @@ export function OrdersHistoryPage({ client, role }: { client: SupabaseClient; ro
     <div className="space-y-4" data-testid="orders-history">
       <form onSubmit={submit} className="space-y-3 rounded-lg border border-brand-border bg-brand-bg-elevated p-3">
         <div className="flex flex-wrap gap-2">
-          <label className="relative min-w-[14rem] flex-1">
+          <label className="relative w-full min-w-0 flex-1 sm:min-w-[14rem]">
             <span className="sr-only">חיפוש הזמנה</span>
             <Search size={16} className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-brand-text-muted" aria-hidden="true" />
             <input
@@ -167,8 +168,8 @@ export function OrdersHistoryPage({ client, role }: { client: SupabaseClient; ro
             <p className="rounded-lg border border-dashed border-brand-border p-6 text-center text-sm text-brand-text-muted">לא נמצאו הזמנות.</p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-brand-border">
-              <table className="w-full min-w-[42rem] text-sm">
-                <thead className="bg-brand-bg-elevated text-start text-xs text-brand-text-muted">
+              <table className={RT_TABLE}>
+                <thead className={`bg-brand-bg-elevated text-start text-xs text-brand-text-muted ${RT_HEAD}`}>
                   <tr>
                     {["מס׳", "תאריך", "לקוח", "כתובת", "סכום", "תשלום", "סטטוס"].map((h) => (
                       <th key={h} scope="col" className="px-3 py-2 text-start font-medium">
@@ -177,22 +178,39 @@ export function OrdersHistoryPage({ client, role }: { client: SupabaseClient; ro
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-brand-border">
+                <tbody className={`divide-y divide-brand-border ${RT_BODY}`}>
                   {result.rows.map((o) => (
-                    <tr key={o.id} data-testid="history-row" data-order-number={o.order_number} onClick={() => setOpenOrder(o)} className="cursor-pointer hover:bg-brand-bg-elevated">
-                      <td className="px-3 py-2 font-semibold">
+                    <tr key={o.id} data-testid="history-row" data-order-number={o.order_number} onClick={() => setOpenOrder(o)} className={`cursor-pointer hover:bg-brand-bg-elevated ${RT_ROW}`}>
+                      <td className={`${RT_CELL} font-semibold`}>
+                        <MobileLabel>מס׳</MobileLabel>
                         <button type="button" onClick={() => setOpenOrder(o)} className="text-brand-gold hover:underline">
                           #{o.order_number}
                         </button>
                       </td>
-                      <td className="px-3 py-2 text-brand-text-muted">{formatDateTime(o.created_at)}</td>
-                      <td className="px-3 py-2">{fullName(o)}</td>
-                      <td className="px-3 py-2 text-brand-text-muted">{addressLine(o)}</td>
-                      <td className="px-3 py-2">{formatShekel(o.total_cents)}</td>
-                      <td className="px-3 py-2 text-brand-text-muted">
-                        {PAYMENT_METHOD_LABEL[o.payment_method]} · {PAYMENT_STATUS_LABEL[o.payment_status]}
+                      <td className={`${RT_CELL} text-brand-text-muted`}>
+                        <MobileLabel>תאריך</MobileLabel>
+                        <span>{formatDateTime(o.created_at)}</span>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className={RT_CELL}>
+                        <MobileLabel>לקוח</MobileLabel>
+                        <span>{fullName(o)}</span>
+                      </td>
+                      <td className={`${RT_CELL} text-brand-text-muted`}>
+                        <MobileLabel>כתובת</MobileLabel>
+                        <span>{addressLine(o)}</span>
+                      </td>
+                      <td className={RT_CELL}>
+                        <MobileLabel>סכום</MobileLabel>
+                        <span>{formatShekel(o.total_cents)}</span>
+                      </td>
+                      <td className={`${RT_CELL} text-brand-text-muted`}>
+                        <MobileLabel>תשלום</MobileLabel>
+                        <span>
+                          {PAYMENT_METHOD_LABEL[o.payment_method]} · {PAYMENT_STATUS_LABEL[o.payment_status]}
+                        </span>
+                      </td>
+                      <td className={RT_CELL}>
+                        <MobileLabel>סטטוס</MobileLabel>
                         <StatusBadge status={o.order_status} />
                       </td>
                     </tr>

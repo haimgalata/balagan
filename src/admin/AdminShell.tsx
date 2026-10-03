@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, LogOut } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
@@ -113,6 +113,13 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
   useEffect(() => {
     if (staffOutsideOrders) navigateAdmin(ORDERS_PATH);
   }, [staffOutsideOrders]);
+
+  // On a phone the menu is a scrolling strip: keep the current section in view.
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const current = navRef.current?.querySelector('[aria-current="page"]');
+    if (current && typeof (current as HTMLElement).scrollIntoView === "function") (current as HTMLElement).scrollIntoView({ block: "nearest", inline: "center" });
+  }, [path]);
   if (staffOutsideOrders) return null;
 
   return (
@@ -134,7 +141,7 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
           </div>
         </div>
 
-        <nav aria-label="ניווט ניהול" className="mx-auto flex max-w-container gap-1 px-4 sm:px-6">
+        <nav ref={navRef} aria-label="ניווט ניהול" className="mx-auto flex max-w-container gap-1 overflow-x-auto px-4 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden">
           {navItems.map((item) =>
             item.enabled ? (
               <a
@@ -145,7 +152,7 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
                   event.preventDefault();
                   navigateAdmin(item.path);
                 }}
-                className={`border-b-2 px-3 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-gold ${
+                className={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-gold ${
                   (item.path === ORDERS_PATH ? onOrders : path === item.path)
                     ? "border-brand-gold text-brand-gold"
                     : "border-transparent text-brand-text-muted hover:text-brand-text"

@@ -47,14 +47,11 @@ export function CartLineRow({ line, onIncrement, onDecrement, onRemove, priceCha
         </div>
 
         <div className="flex flex-col gap-0.5 text-xs text-brand-text-muted">
-          <div className="flex items-center justify-between">
-            <span>
-              {quantity} × {label} (
-              {pricing.onSale && <span className="text-brand-danger line-through">₪{formatPrice(pricing.regularCents)} </span>}
-              ₪{formatPrice(pricing.effectiveCents)})
-            </span>
-            <span className="text-brand-text">₪{formatPrice(line.lineTotalCents)}</span>
-          </div>
+          <span>
+            {quantity} × {label} (
+            {pricing.onSale && <span className="text-brand-text-muted line-through">₪{formatPrice(pricing.regularCents)} </span>}
+            ₪{formatPrice(pricing.effectiveCents)})
+          </span>
           {available && line.savingsCents > 0 && (
             <div className="flex items-center justify-between text-brand-success">
               <span>מבצע</span>
@@ -87,7 +84,10 @@ export function CartLineRow({ line, onIncrement, onDecrement, onRemove, priceCha
               <Minus size={16} />
             </button>
           </div>
-          <span className={`font-semibold ${available ? "text-brand-gold" : "text-brand-text-muted"}`}>
+          <span className={`flex items-baseline gap-1.5 font-semibold ${available ? "text-brand-gold" : "text-brand-text-muted"}`}>
+            {available && line.savingsCents > 0 && (
+              <s className="text-xs font-normal text-brand-text-muted">₪{formatPrice(line.lineTotalCents + line.savingsCents)}</s>
+            )}
             ₪{formatPrice(line.lineTotalCents)}
           </span>
         </div>

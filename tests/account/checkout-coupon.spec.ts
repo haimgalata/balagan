@@ -111,7 +111,7 @@ test("a guest SEES the coupon area, locked, with the club message and a way to j
   await expect(locked).toContainText("קופונים הם הטבה לחברי מועדון בלאגן.");
   await expect(locked.getByRole("textbox", { name: "קוד קופון (למועדון בלבד)" })).toBeDisabled();
   await expect(codeInput(page)).toHaveCount(0); // no working input at all
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
 
   await locked.getByRole("button", { name: "כניסה למועדון לשימוש בקופון" }).click();
   await expect(page.locator('[role="dialog"][aria-label="התחברות למועדון"]').getByLabel("טלפון נייד")).toBeVisible(); // the same sign-in drawer
@@ -154,7 +154,7 @@ test("a member applies a code: it is normalized, sent with THEIR token, and the 
   await expect(page.getByTestId("coupon-applied")).toContainText("הנחת מועדון");
   await expect(page.getByTestId("coupon-applied")).toContainText("חיסכון של ₪100");
   await expect(page.getByTestId("coupon-discount-line")).toContainText("-₪100");
-  await expect(total(page)).toHaveText("₪400"); // ₪500 − ₪100 (the delivery fee stays outside this total, as it always did)
+  await expect(total(page)).toHaveText("₪415"); // ₪500 − ₪100 + ₪15 delivery
   expect(previews[0]).toMatchObject({ authorization: MEMBER_TOKEN, code: "CLUB20", subtotal: 50000 });
 });
 
@@ -162,7 +162,7 @@ test("a refused code is explained in words and nothing changes", async ({ page }
   await openAsMember(page);
   await apply(page, "NOPE");
   await expect(page.getByRole("alert").filter({ hasText: "קוד הקופון אינו תקין" })).toBeVisible();
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
 
   await apply(page, "bigspender");
   await expect(page.getByRole("alert").filter({ hasText: "הקופון תקף להזמנה מסכום של ₪900 ומעלה." })).toBeVisible();
@@ -183,7 +183,7 @@ test("free delivery: the delivery line shows it waived and the items total is un
   await expect(page.getByTestId("coupon-applied")).toContainText("משלוח חינם");
   await expect(page.getByText("חינם (קופון)")).toBeVisible();
   await expect(page.getByTestId("coupon-discount-line")).toHaveCount(0);
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪500"); // items ₪500 + delivery waived
 });
 
 test("the order carries only the CODE and the member token — never an amount — and the success screen shows the saving", async ({ page }) => {
@@ -205,9 +205,9 @@ test("the order carries only the CODE and the member token — never an amount �
 test("removing the coupon restores the total and the next order has no coupon", async ({ page }) => {
   const { sent } = await openAsMember(page);
   await apply(page, "CLUB20");
-  await expect(total(page)).toHaveText("₪400");
+  await expect(total(page)).toHaveText("₪415");
   await page.getByRole("button", { name: "הסרת הקופון" }).click();
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
   await expect(page.getByTestId("coupon-form")).toBeVisible();
   await ageBox(page).check();
   await submit(page);
@@ -218,31 +218,31 @@ test("removing the coupon restores the total and the next order has no coupon", 
 test("the discount follows the cart: a bigger basket re-prices it, and one that falls under the coupon's minimum drops it", async ({ page }) => {
   const { previews, control } = await openAsMember(page);
   await apply(page, "CLUB20");
-  await expect(total(page)).toHaveText("₪400");
+  await expect(total(page)).toHaveText("₪415");
 
   await page.getByRole("button", { name: /^הוסף / }).first().click(); // two packs
   await expect(page.getByTestId("coupon-discount-line")).toContainText("-₪200");
-  await expect(total(page)).toHaveText("₪800");
+  await expect(total(page)).toHaveText("₪815");
   expect(previews.at(-1)!.subtotal).toBe(100000);
 
   control.refuse.set("CLUB20", "COUPON_MIN_ORDER");
   await page.getByRole("button", { name: /^הפחת / }).first().click();
   await expect(page.getByTestId("coupon-applied")).toHaveCount(0);
   await expect(page.getByRole("alert").filter({ hasText: "הקופון תקף להזמנה בסכום גבוה יותר." })).toBeVisible();
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
 });
 
 test("a coupon that stops holding before the order is dropped with the new total — the order is NOT sent until the customer confirms again", async ({ page }) => {
   const { sent, control } = await openAsMember(page);
   await apply(page, "CLUB20");
-  await expect(total(page)).toHaveText("₪400");
+  await expect(total(page)).toHaveText("₪415");
   await ageBox(page).check();
 
   control.refuse.set("CLUB20", "COUPON_EXHAUSTED"); // someone took the last use meanwhile
   await submit(page);
   await expect(page.getByText("הקופון שהוחל כבר אינו תקף והוסר, והסכום עודכן.")).toBeVisible();
   await expect(page.getByRole("alert").filter({ hasText: "הקופון מוצה ואינו זמין עוד." })).toBeVisible();
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
   expect(sent, "nothing was ordered for a discount the customer no longer has").toHaveLength(0);
 
   await submit(page); // the customer saw the new total and confirms
@@ -259,7 +259,7 @@ test("if the database refuses the coupon while creating the order, it is dropped
   await submit(page);
   await expect(page.getByRole("alert").filter({ hasText: "כבר מימשתם את הקופון הזה." }).first()).toBeVisible();
   await expect(page.getByTestId("coupon-applied")).toHaveCount(0);
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
   await expect(page.getByRole("heading", { name: "ההזמנה התקבלה!" })).toHaveCount(0);
   expect(sent).toHaveLength(1);
 });
@@ -267,8 +267,8 @@ test("if the database refuses the coupon while creating the order, it is dropped
 test("signing out takes the coupon with it and locks the area again", async ({ page }) => {
   await openAsMember(page);
   await apply(page, "CLUB20");
-  await expect(total(page)).toHaveText("₪400");
+  await expect(total(page)).toHaveText("₪415");
   await page.getByRole("button", { name: "התנתקות" }).click();
   await expect(page.getByTestId("coupon-locked")).toBeVisible();
-  await expect(total(page)).toHaveText("₪500");
+  await expect(total(page)).toHaveText("₪515");
 });

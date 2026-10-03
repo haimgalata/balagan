@@ -35,6 +35,17 @@ export function formatPrice(cents: number): string {
   return `${sign}${shekels}.${String(agorot).padStart(2, "0")}`;
 }
 
+/**
+ * What the customer actually pays for an order: the items, plus delivery, minus what a coupon takes off — the same
+ * arithmetic as the database's `total = subtotal + delivery_fee - discount` (create_order, migration 0014), where a
+ * free-delivery coupon's discount IS the delivery fee. Display only: the database prices the real order.
+ */
+export function getPayableTotalCents(input: { subtotalCents: number; deliveryFeeCents: number; couponDiscountCents?: number; freeDelivery?: boolean }): number {
+  const fee = input.freeDelivery ? 0 : input.deliveryFeeCents;
+  const itemsDiscount = input.freeDelivery ? 0 : (input.couponDiscountCents ?? 0);
+  return Math.max(0, input.subtotalCents - itemsDiscount + fee);
+}
+
 export interface OptionPricing {
   /** Regular price, agorot. */
   regularCents: number;

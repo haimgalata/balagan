@@ -19,9 +19,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
  * businessHours.ts/deliveryInfo.ts + useBusinessStatus.ts were replaced by DB-backed
  * BusinessSettingsContext/businessSettingsApi.ts/scheduleStatus.ts + useStoreStatus/useOrderStatus (Hero,
  * BusinessInfoBar and CartDrawer now read from it) — every visitor needs this, so it stays in the customer
- * bundle, not the admin-only chunk. Allowed growth from here: 1.2 KB, for incidental future changes.
+ * bundle, not the admin-only chunk. 68,968 bytes (club-login build) after the cart drawer gained a real money summary
+ * (items, sale savings, delivery, amount due — OrderTotals.tsx) and the clearer sale presentation in CartLineRow. Allowed
+ * growth from here: 1.2 KB, for incidental future changes.
  */
-const CUSTOMER_GZIP_BASELINE = 67_426;
+const CUSTOMER_GZIP_BASELINE = 68_968;
 const ALLOWED_GROWTH = 1_200;
 
 /** Runs a real production build into a temp dir and hands the output to `check`. */

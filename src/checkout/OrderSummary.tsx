@@ -3,6 +3,7 @@ import { useCart } from "@/storefront/context/CartContext";
 import { useBusinessSettings } from "@/storefront/context/BusinessSettingsContext";
 import { CartLineRow } from "@/storefront/components/CartLineRow";
 import { formatPrice } from "@/storefront/lib/pricing";
+import { OrderTotals } from "@/storefront/components/OrderTotals";
 import type { AppliedCoupon } from "@/checkout/couponTypes";
 
 interface OrderSummaryProps {
@@ -23,8 +24,7 @@ export function OrderSummary({ changedPriceKeys, couponSlot, coupon }: OrderSumm
   const { lines, totalPriceCents, increment, decrement, removeLine } = useCart();
   const { settings } = useBusinessSettings();
   const freeDelivery = coupon?.discountType === "free_delivery";
-  // The "total" here is the items total, as it always was; a percent/fixed coupon comes off it, free delivery comes off the delivery line.
-  const itemsTotalCents = totalPriceCents - (coupon && !freeDelivery ? coupon.discountCents : 0);
+  const savingsCents = lines.reduce((sum, line) => (line.available ? sum + line.savingsCents : sum), 0);
 
   return (
     <div className="rounded-2xl border border-brand-border bg-brand-bg-elevated">
@@ -43,28 +43,13 @@ export function OrderSummary({ changedPriceKeys, couponSlot, coupon }: OrderSumm
 
       <div className="border-t border-brand-border px-4 py-4">
         {couponSlot}
-        <p className="mb-3 text-center text-xs text-brand-text-muted">
-          {freeDelivery ? (
-            <>
-              משלוח <s>₪{formatPrice(settings.delivery_fee_cents)}</s> חינם (קופון)
-            </>
-          ) : (
-            <>משלוח ₪{formatPrice(settings.delivery_fee_cents)}</>
-          )}{" "}
-          · מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}
-        </p>
-        {coupon && !freeDelivery && (
-          <div className="mb-2 flex items-center justify-between text-sm" data-testid="coupon-discount-line">
-            <span className="text-brand-text-muted">
-              קופון <span dir="ltr">{coupon.code}</span>
-            </span>
-            <span className="font-medium text-brand-text">-₪{formatPrice(coupon.discountCents)}</span>
-          </div>
-        )}
-        <div className="flex items-center justify-between text-lg">
-          <span className="font-medium text-brand-text">סה&quot;כ לתשלום</span>
-          <span className="font-bold text-brand-gold">₪{formatPrice(itemsTotalCents)}</span>
-        </div>
+        <p className="mb-3 text-center text-xs text-brand-text-muted">מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}</p>
+        <OrderTotals
+          subtotalCents={totalPriceCents}
+          deliveryFeeCents={settings.delivery_fee_cents}
+          savingsCents={savingsCents}
+          coupon={coupon ? { code: coupon.code, discountCents: coupon.discountCents, freeDelivery } : null}
+        />
       </div>
     </div>
   );

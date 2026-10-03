@@ -5,6 +5,7 @@ import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
 import { useBusinessSettings } from "@/storefront/context/BusinessSettingsContext";
 import { formatPrice } from "@/storefront/lib/pricing";
+import { OrderTotals } from "@/storefront/components/OrderTotals";
 
 /**
  * Cart drawer — frontend-only, backed by CartContext (localStorage).
@@ -23,6 +24,7 @@ export function CartDrawer() {
   const { lines, totalPriceCents, isOpen, closeCart, increment, decrement, removeLine } = useCart();
   const { settings } = useBusinessSettings();
 
+  const savingsCents = lines.reduce((sum, line) => (line.available ? sum + line.savingsCents : sum), 0);
   const remainingForMinCents = Math.max(0, settings.min_order_cents - totalPriceCents);
   const belowMinimum = remainingForMinCents > 0;
 
@@ -56,14 +58,9 @@ export function CartDrawer() {
           </ul>
 
           <div className="border-t border-brand-border px-4 py-4">
-            <p className="mb-3 text-center text-xs text-brand-text-muted">
-              משלוח ₪{formatPrice(settings.delivery_fee_cents)} · מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}
-            </p>
+            <p className="mb-3 text-center text-xs text-brand-text-muted">מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}</p>
 
-            <div className="mb-4 flex items-center justify-between text-lg">
-              <span className="font-medium text-brand-text">סה&quot;כ לתשלום</span>
-              <span className="font-bold text-brand-gold">₪{formatPrice(totalPriceCents)}</span>
-            </div>
+            <OrderTotals subtotalCents={totalPriceCents} deliveryFeeCents={settings.delivery_fee_cents} savingsCents={savingsCents} />
 
             <Button variant="primary" size="lg" className="w-full" disabled={belowMinimum} onClick={handleCheckoutClick}>
               מעבר לתשלום

@@ -9,6 +9,7 @@ import {
 } from "@/admin/customers/customersModel";
 import { downloadTextFile } from "@/admin/customers/downloadFile";
 import { PAGE_SIZE, useCustomers } from "@/admin/customers/useCustomers";
+import { MobileLabel, RT_BODY, RT_CELL, RT_HEAD, RT_ROW, RT_TABLE } from "@/admin/shared/responsiveTable";
 
 const inputClasses =
   "rounded-lg border border-brand-border bg-brand-bg px-3 py-2 text-sm text-brand-text outline-none transition-colors focus-visible:border-brand-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:opacity-50";
@@ -165,7 +166,7 @@ export function CustomersPage({ client }: { client: SupabaseClient }) {
         </h2>
 
         <form onSubmit={submitSearch} className="flex flex-wrap items-end gap-3" role="search" aria-label="חיפוש חברים">
-          <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs text-brand-text-muted">
+          <label className="flex w-full min-w-0 flex-1 flex-col gap-1 text-xs text-brand-text-muted sm:min-w-[14rem]">
             חיפוש (שם, טלפון או אימייל)
             <input value={draftSearch} onChange={(event) => setDraftSearch(event.target.value)} className={inputClasses} placeholder="050-0000000" />
           </label>
@@ -195,8 +196,8 @@ export function CustomersPage({ client }: { client: SupabaseClient }) {
           <p className="rounded-lg border border-brand-border bg-brand-bg-elevated p-6 text-center text-sm text-brand-text-muted">לא נמצאו חברים.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-brand-border">
-            <table className="w-full min-w-[44rem] text-start text-sm">
-              <thead className="bg-brand-bg-elevated text-xs text-brand-text-muted">
+            <table className={`${RT_TABLE} text-start`}>
+              <thead className={`bg-brand-bg-elevated text-xs text-brand-text-muted ${RT_HEAD}`}>
                 <tr>
                   {["שם", "טלפון", "אימייל", "הצטרפות", "הזמנה אחרונה", "הזמנות", "דיוור"].map((heading) => (
                     <th key={heading} scope="col" className="px-3 py-2 text-start font-medium">
@@ -205,20 +206,39 @@ export function CustomersPage({ client }: { client: SupabaseClient }) {
                   ))}
                 </tr>
               </thead>
-              <tbody>
+              <tbody className={RT_BODY}>
                 {c.list.data.rows.map((row) => (
-                  <tr key={row.id} className="border-t border-brand-border">
-                    <td className="px-3 py-2 text-brand-text">{memberName(row) || <span className="text-brand-text-muted">—</span>}</td>
-                    <td className="px-3 py-2 text-brand-text" dir="ltr">
-                      {formatPhoneLocal(row.phone)}
+                  <tr key={row.id} className={`border-t border-brand-border ${RT_ROW}`}>
+                    <td className={`${RT_CELL} text-brand-text`}>
+                      <MobileLabel>שם</MobileLabel>
+                      <span>{memberName(row) || <span className="text-brand-text-muted">—</span>}</span>
                     </td>
-                    <td className="px-3 py-2 text-brand-text" dir="ltr">
-                      {row.email ?? <span className="text-brand-text-muted">—</span>}
+                    <td className={`${RT_CELL} text-brand-text`}>
+                      <MobileLabel>טלפון</MobileLabel>
+                      <span dir="ltr">{formatPhoneLocal(row.phone)}</span>
                     </td>
-                    <td className="px-3 py-2 text-brand-text-muted">{formatIsraelDate(row.joinedAt)}</td>
-                    <td className="px-3 py-2 text-brand-text-muted">{formatIsraelDate(row.lastOrderAt) || "—"}</td>
-                    <td className="px-3 py-2 text-brand-text">{row.ordersCount}</td>
-                    <td className={`px-3 py-2 ${row.marketing ? "text-brand-text" : "text-brand-danger"}`}>{marketingLabel(row)}</td>
+                    <td className={`${RT_CELL} text-brand-text`}>
+                      <MobileLabel>אימייל</MobileLabel>
+                      <span dir="ltr" className="min-w-0 break-all">
+                        {row.email ?? <span className="text-brand-text-muted">—</span>}
+                      </span>
+                    </td>
+                    <td className={`${RT_CELL} text-brand-text-muted`}>
+                      <MobileLabel>הצטרפות</MobileLabel>
+                      <span>{formatIsraelDate(row.joinedAt)}</span>
+                    </td>
+                    <td className={`${RT_CELL} text-brand-text-muted`}>
+                      <MobileLabel>הזמנה אחרונה</MobileLabel>
+                      <span>{formatIsraelDate(row.lastOrderAt) || "—"}</span>
+                    </td>
+                    <td className={`${RT_CELL} text-brand-text`}>
+                      <MobileLabel>הזמנות</MobileLabel>
+                      <span>{row.ordersCount}</span>
+                    </td>
+                    <td className={`${RT_CELL} ${row.marketing ? "text-brand-text" : "text-brand-danger"}`}>
+                      <MobileLabel>דיוור</MobileLabel>
+                      <span>{marketingLabel(row)}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

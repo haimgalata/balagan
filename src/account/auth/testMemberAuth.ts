@@ -7,12 +7,16 @@
  * account's PASSWORD — typed by the tester, never stored in env or the bundle. The session is a real Supabase JWT, so
  * `auth.uid()` in the database is the member and every club RPC / RLS rule is exercised for real.
  *
- * Guard rails: localhost only; only the email in VITE_TEST_MEMBER_EMAIL; the account must carry the phone the tester
+ * Guard rails: this computer or a private network only (devHost.ts); only the email in VITE_TEST_MEMBER_EMAIL; the account must carry the phone the tester
  * typed; an owner/staff account is refused (a back-office user is never a "customer"). `grant_type=password` can't
  * create users, so sign-ups stay off.
  */
 import { CustomerAuthError, type CustomerAuth, type CustomerSession } from "@/account/types";
 import { isIsraeliMobile, normalizeIsraeliPhone } from "@/storefront/lib/phone";
+import { isDevHost } from "@/account/auth/devHost";
+
+/** Present only in a realtest dev build; tests/admin/auth/bundle.unit.spec.ts and `npm run check:prod` fail if it is found in anything deployable. */
+export const DEV_ONLY_MARKER = "BALAGAN_DEV_ONLY_REALTEST";
 
 export const TEST_MEMBER_STORAGE_KEY = "balagan-customer-auth";
 
@@ -24,9 +28,9 @@ interface Stored extends CustomerSession {
 const url = () => (import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "");
 const headers = () => ({ apikey: import.meta.env.VITE_SUPABASE_ANON_KEY ?? "", "Content-Type": "application/json" });
 
+/** This computer or a private network (a phone on the home Wi-Fi) — never a public address. See devHost.ts. */
 function assertLocal(): void {
-  const host = window.location.hostname;
-  if (host !== "localhost" && host !== "127.0.0.1") throw new CustomerAuthError("NOT_CONFIGURED");
+  if (!isDevHost(window.location.hostname)) throw new CustomerAuthError("NOT_CONFIGURED");
 }
 
 function read(): Stored | null {
@@ -89,6 +93,7 @@ async function isBackOffice(accessToken: string): Promise<boolean> {
 }
 
 export function createTestMemberAuth(): CustomerAuth {
+  console.warn(`[${DEV_ONLY_MARKER}] real-database test login active: one dedicated test member, password over plain http on a private network. Never deploy this build.`);
   return {
     kind: "realtest",
     async sendCode(phoneE164) {

@@ -60,7 +60,9 @@ const ACCOUNT_ONLY = ["balagan-customer-auth", "get_my_customer", "join_club", "
   // the personal area (/account)
   "set_marketing_consent", "delete_my_account", "get_my_orders", "מחיקת החשבון שלי",
   // coupons are a club benefit: the apply-coupon request and the coupon box exist only with a club login
-  "preview_coupon", "יש לכם קוד קופון?"];
+  "preview_coupon", "יש לכם קוד קופון?",
+  // the dev-only real-database test login (docs/PRODUCTION_CHECKLIST.md) must never be in a normal OR a mock-login build
+  "BALAGAN_DEV_ONLY_REALTEST"];
 
 test("the club login is not in a normal build at all, and the mock login can never ship", async () => {
   test.setTimeout(240_000);

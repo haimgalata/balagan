@@ -10,6 +10,11 @@ export default defineConfig(({ mode, command }) => {
   if (env.VITE_CUSTOMER_AUTH === "realtest" && command !== "serve") {
     throw new Error('VITE_CUSTOMER_AUTH=realtest is for the dev server only (npm run dev:club:real) — refusing to build.');
   }
+  // ...and even the dev server only when `npm run dev:club:real` asked for it: a stray VITE_CUSTOMER_AUTH=realtest in
+  // .env.local or in a host's build settings must never switch this on.
+  if (env.VITE_CUSTOMER_AUTH === "realtest" && process.env.BALAGAN_DEV_REAL !== "1") {
+    throw new Error("VITE_CUSTOMER_AUTH=realtest is only honoured when started by `npm run dev:club:real` (it sets BALAGAN_DEV_REAL=1). Remove it from your env files / host settings.");
+  }
   return {
     plugins: [react()],
     resolve: {

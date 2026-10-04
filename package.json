@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:club": "node scripts/dev-club.mjs",
     "dev:club:real": "node scripts/dev-club-real.mjs",
+    "check:prod": "node scripts/check-production-ready.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",

@@ -7,6 +7,7 @@
  * The password is typed in the login screen — never put it in a file. Everything you do here writes REAL rows.
  */
 import { spawn } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
@@ -31,15 +32,22 @@ if (!/^https:\/\/.+\.supabase\.co/.test(url) || key === "" || email === "") {
   process.exit(1);
 }
 
-const env = { ...process.env, VITE_CATALOG_SOURCE: "supabase", VITE_CUSTOMER_AUTH: "realtest", VITE_TEST_MEMBER_EMAIL: email };
+// BALAGAN_DEV_REAL=1 is the explicit opt-in vite.config.ts requires for the realtest login; nothing else sets it.
+const env = { ...process.env, BALAGAN_DEV_REAL: "1", VITE_CATALOG_SOURCE: "supabase", VITE_CUSTOMER_AUTH: "realtest", VITE_TEST_MEMBER_EMAIL: email };
+
+// The addresses this computer has on the local network, to open the app from a phone on the same Wi-Fi.
+const lan = Object.values(networkInterfaces()).flat().filter((i) => i && i.family === "IPv4" && !i.internal).map((i) => `http://${i.address}:${APP_PORT}`);
 
 console.log(`
   Club login — REAL DATABASE test
   -------------------------------
   App:      http://localhost:${APP_PORT}     Project: ${new URL(url).host}
+  On a phone (same Wi-Fi): ${lan.length ? lan.join("   ") : "(no network address found)"}
   Account:  ${email} (the only account this login accepts; owner/staff are refused)
   Login:    type the account's phone number, then its PASSWORD in the "code" box.
   WARNING:  join / orders / addresses / consent written here are REAL rows (a cash order deducts real stock).
+  DEV ONLY: the server listens on your whole local network and the test password travels over plain http on it —
+            use trusted Wi-Fi only. Nothing here can ship: see docs/PRODUCTION_CHECKLIST.md and npm run check:prod.
 `);
 
 const child = spawn(process.execPath, [join(ROOT, "node_modules", "vite", "bin", "vite.js"), "--host", "0.0.0.0", "--port", APP_PORT, "--strictPort"], { cwd: ROOT, env, stdio: "inherit" });

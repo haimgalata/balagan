@@ -1,19 +1,10 @@
 /** Pure helpers for showing a member's past orders — no React, unit-tested (tests/account/orderLabels.unit.spec.ts). */
 import type { MyOrder } from "@/account/types";
+import { customerStatusLabel } from "@/order/orderStatusText";
 
-/** What the customer should read for each order status (the same states the store's order board moves through). */
-const STATUS_LABELS: Record<string, string> = {
-  pending: "ממתינה לתשלום",
-  confirmed: "התקבלה",
-  preparing: "בהכנה",
-  out_for_delivery: "בדרך אליכם",
-  completed: "נמסרה",
-  cancelled: "בוטלה",
-  expired: "פגה",
-};
-
-export function orderStatusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? "בטיפול";
+/** What the customer should read for each order status — the same wording as the order-tracking page. */
+export function orderStatusLabel(status: string, fulfillment: "delivery" | "pickup" = "delivery"): string {
+  return customerStatusLabel(status, fulfillment);
 }
 
 /** "active" orders are still on their way to the customer; the rest are history. Drives the chip colour. */
@@ -37,8 +28,9 @@ export function summarizeItems(order: MyOrder, maxNames = 3): string {
   return `${names.slice(0, maxNames).join(", ")} ועוד ${names.length - maxNames}`;
 }
 
-/** The address as one line, e.g. "הרצל 12, דירה 5". */
+/** The address as one line, e.g. "הרצל 12, דירה 5" — or "איסוף עצמי מהחנות" for a pickup order. */
 export function orderAddressLine(order: MyOrder): string {
+  if (order.fulfillmentMethod === "pickup") return "איסוף עצמי מהחנות";
   const extras = [order.entrance && `כניסה ${order.entrance}`, order.floor && `קומה ${order.floor}`, order.apartment && `דירה ${order.apartment}`].filter(Boolean);
   return [`${order.street} ${order.houseNumber}`.trim(), ...extras].join(", ");
 }

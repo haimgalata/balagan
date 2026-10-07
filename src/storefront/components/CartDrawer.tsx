@@ -6,6 +6,8 @@ import { Button } from "@/shared/ui/Button";
 import { useBusinessSettings } from "@/storefront/context/BusinessSettingsContext";
 import { formatPrice } from "@/storefront/lib/pricing";
 import { OrderTotals } from "@/storefront/components/OrderTotals";
+import { getOrderingRules } from "@/storefront/lib/fulfillment";
+import { useOrderStatus } from "@/storefront/hooks/useOrderStatus";
 
 /**
  * Cart drawer — frontend-only, backed by CartContext (localStorage).
@@ -16,20 +18,24 @@ import { OrderTotals } from "@/storefront/components/OrderTotals";
  * and left out of the total.
  *
  * "מעבר לתשלום" is a real navigation to `/checkout` (see `src/checkout/`) once the cart total
- * meets the store's minimum order — below that, the button stays disabled with an explanation.
- * Checkout itself still ends in a "coming soon" state for now: there is no order-processing/
- * payment backend yet, only a fully validated details flow leading up to it.
+ * meets the store's minimum order — below that, the button stays disabled with an explanation. When orders are
+ * picked up at the store (see fulfillment.ts) there is no minimum and no delivery fee.
  */
 export function CartDrawer() {
   const { lines, totalPriceCents, isOpen, closeCart, increment, decrement, removeLine } = useCart();
   const { settings } = useBusinessSettings();
+  const rules = getOrderingRules(settings);
+  const pickup = rules.fulfillment === "pickup";
+  // Outside the order hours (or while the owner paused orders) checkout can't be reached; the database refuses such
+  // an order anyway (ORDERS_CLOSED, migration 0015).
+  const { isOpen: ordersOpen, hoursLabel } = useOrderStatus();
 
   const savingsCents = lines.reduce((sum, line) => (line.available ? sum + line.savingsCents : sum), 0);
-  const remainingForMinCents = Math.max(0, settings.min_order_cents - totalPriceCents);
+  const remainingForMinCents = Math.max(0, rules.minOrderCents - totalPriceCents);
   const belowMinimum = remainingForMinCents > 0;
 
   const handleCheckoutClick = () => {
-    if (belowMinimum) return; // the button is disabled too; this is just defense in depth
+    if (belowMinimum || !ordersOpen) return; // the button is disabled too; this is just defense in depth
     window.location.assign("/checkout");
   };
 
@@ -58,15 +64,23 @@ export function CartDrawer() {
           </ul>
 
           <div className="border-t border-brand-border px-4 py-4">
-            <p className="mb-3 text-center text-xs text-brand-text-muted">מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}</p>
+            <p className="mb-3 text-center text-xs text-brand-text-muted">
+              {pickup ? "איסוף עצמי מהחנות" : `מינימום הזמנה ₪${formatPrice(rules.minOrderCents)}`}
+            </p>
 
-            <OrderTotals subtotalCents={totalPriceCents} deliveryFeeCents={settings.delivery_fee_cents} savingsCents={savingsCents} />
+            <OrderTotals subtotalCents={totalPriceCents} deliveryFeeCents={rules.deliveryFeeCents} savingsCents={savingsCents} pickup={pickup} />
 
-            <Button variant="primary" size="lg" className="w-full" disabled={belowMinimum} onClick={handleCheckoutClick}>
+            <Button variant="primary" size="lg" className="w-full" disabled={belowMinimum || !ordersOpen} onClick={handleCheckoutClick}>
               מעבר לתשלום
             </Button>
 
-            {belowMinimum && (
+            {!ordersOpen && (
+              <p role="status" className="mt-2.5 text-center text-xs text-brand-danger">
+                ההזמנות באתר סגורות כרגע{hoursLabel !== "סגור היום" ? ` (שעות הזמנה היום: ${hoursLabel})` : ""}
+              </p>
+            )}
+
+            {ordersOpen && belowMinimum && (
               <p role="status" className="mt-2.5 text-center text-xs text-brand-danger">
                 נדרשים עוד ₪{formatPrice(remainingForMinCents)} להשלמת מינימום ההזמנה
               </p>

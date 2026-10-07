@@ -23,6 +23,12 @@ export interface RpcBusinessSettings {
   orders_paused: boolean;
   /** The owner's one public sentence about club offers, shown (locked) to guests in checkout. Absent in older cached copies. */
   club_offer_text?: string | null;
+  // Migration 0015 — absent from an older database or cached copy (see getOrderingRules for what that means).
+  pickup_enabled?: boolean;
+  delivery_enabled?: boolean;
+  cash_enabled?: boolean;
+  card_enabled?: boolean;
+  store_address_text?: string | null;
 }
 
 // ---------------------------------------------------------------- validation
@@ -44,6 +50,10 @@ export function parseRpcBusinessSettings(value: unknown): RpcBusinessSettings | 
   if (!isNum(value.min_order_cents) || !isNum(value.delivery_fee_cents) || typeof value.orders_paused !== "boolean") return null;
   // optional (a database that has not applied migration 0014 yet doesn't send it) but never a wrong type
   if (value.club_offer_text !== undefined && !isStrOrNull(value.club_offer_text)) return null;
+  for (const key of ["pickup_enabled", "delivery_enabled", "cash_enabled", "card_enabled"] as const) {
+    if (value[key] !== undefined && typeof value[key] !== "boolean") return null;
+  }
+  if (value.store_address_text !== undefined && !isStrOrNull(value.store_address_text)) return null;
   return value as unknown as RpcBusinessSettings;
 }
 

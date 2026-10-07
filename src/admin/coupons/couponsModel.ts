@@ -41,7 +41,8 @@ export interface RedemptionRow {
   redeemed_at: string | null;
   released_at: string | null;
   released_reason: string | null;
-  orders?: { order_number: number; order_status: string; street: string; house_number: string; apartment: string | null; total_cents: number } | null;
+  /** street / house_number are NULL on a pickup order (migration 0015). */
+  orders?: { order_number: number; order_status: string; street: string | null; house_number: string | null; apartment: string | null; total_cents: number } | null;
 }
 
 export interface CouponEventRow {
@@ -270,13 +271,13 @@ export function toPayload(v: CouponFormValues, opts: { mode: "create" | "edit"; 
 
 /** A delivery address reduced to what makes two orders "the same door" (case/space-insensitive). */
 export const addressKey = (o: NonNullable<RedemptionRow["orders"]>): string =>
-  [o.street, o.house_number, o.apartment ?? ""].map((p) => p.trim().toLowerCase().replace(/\s+/g, " ")).join("|");
+  [o.street ?? "", o.house_number ?? "", o.apartment ?? ""].map((p) => p.trim().toLowerCase().replace(/\s+/g, " ")).join("|");
 
 /** Address keys on which MORE THAN ONE phone redeemed this coupon (a hint for the owner, never a block). */
 export function sharedAddressKeys(rows: readonly RedemptionRow[]): Set<string> {
   const phonesByAddress = new Map<string, Set<string>>();
   for (const r of rows) {
-    if (!r.orders || r.status === "released") continue;
+    if (!r.orders || r.status === "released" || !r.orders.street) continue; // a pickup order has no door to share
     const key = addressKey(r.orders);
     const phones = phonesByAddress.get(key) ?? new Set<string>();
     phones.add(r.phone_e164);

@@ -141,8 +141,14 @@ function Detail({ client, coupon, usage, version, busy, onEdit, onDuplicate, onT
                   </div>
                   {r.orders && (
                     <div className="text-xs text-brand-text-muted">
-                      {r.orders.street} {r.orders.house_number}
-                      {r.orders.apartment ? `, דירה ${r.orders.apartment}` : ""}
+                      {r.orders.street ? (
+                        <>
+                          {r.orders.street} {r.orders.house_number}
+                          {r.orders.apartment ? `, דירה ${r.orders.apartment}` : ""}
+                        </>
+                      ) : (
+                        "איסוף עצמי"
+                      )}
                     </div>
                   )}
                   {flagged && <div className="mt-1 text-xs text-brand-danger" data-testid="shared-address-flag">שימו לב: כמה מספרי טלפון שונים מימשו את הקופון לאותה כתובת.</div>}

@@ -25,7 +25,29 @@ const LANES: { status: ActiveStatus; title: string; empty: string }[] = [
   { status: "confirmed", title: STATUS_LABEL.confirmed, empty: "אין הזמנות חדשות" },
   { status: "preparing", title: STATUS_LABEL.preparing, empty: "אין הזמנות בהכנה" },
   { status: "out_for_delivery", title: STATUS_LABEL.out_for_delivery, empty: "אין הזמנות בדרך" },
+  { status: "ready_for_pickup", title: STATUS_LABEL.ready_for_pickup, empty: "אין הזמנות שמחכות לאיסוף" },
 ];
+
+/**
+ * Which of the two "last step" lanes the board shows: the one for each way of receiving orders the shop has switched
+ * on (read from the public get_business_settings(), which staff may call too), plus any lane that still holds orders.
+ * Until the settings arrive (or if they can't be read) the delivery lane is shown, as before migration 0015.
+ */
+function useFulfillmentModes(client: SupabaseClient): { pickup: boolean; delivery: boolean } {
+  const [modes, setModes] = useState({ pickup: false, delivery: true });
+  useEffect(() => {
+    let alive = true;
+    void client.rpc("get_business_settings").then(({ data }) => {
+      if (!alive || typeof data !== "object" || data === null) return;
+      const d = data as Record<string, unknown>;
+      setModes({ pickup: d.pickup_enabled === true, delivery: d.delivery_enabled !== false });
+    }, () => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [client]);
+  return modes;
+}
 
 interface CancelNotice {
   id: string;
@@ -57,6 +79,7 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
   const { data, error, connection, refresh } = useActiveOrders(client);
   const actions = useOrderActions(client, refresh);
   const now = useNow(30_000);
+  const modes = useFulfillmentModes(client);
   const [openOrder, setOpenOrder] = useState<OrderRow | null>(null);
   const [notices, setNotices] = useState<CancelNotice[]>([]);
   const [detailVersion, setDetailVersion] = useState(0);
@@ -88,8 +111,13 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
   }, [data]);
 
   const lanes = useMemo(
-    () => LANES.map((lane) => ({ ...lane, orders: (data?.active ?? []).filter((o) => o.order_status === lane.status) })),
-    [data]
+    () =>
+      LANES.map((lane) => ({ ...lane, orders: (data?.active ?? []).filter((o) => o.order_status === lane.status) })).filter(
+        (lane) =>
+          lane.orders.length > 0 ||
+          (lane.status === "out_for_delivery" ? modes.delivery : lane.status === "ready_for_pickup" ? modes.pickup : true)
+      ),
+    [data, modes]
   );
   const attention = useMemo(() => {
     const seen = new Set<string>();
@@ -161,7 +189,7 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
 
       {data && (
         <>
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className={`grid gap-4 ${lanes.length > 3 ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
             {lanes.map((lane) => (
               <section key={lane.status} aria-label={lane.title} data-testid={`lane-${lane.status}`}>
                 <h2 className="mb-2 flex items-center justify-between text-base font-semibold text-brand-text">
@@ -206,7 +234,7 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
                       <span className="flex items-center gap-2">
                         <span className="text-brand-text-muted">{formatTime(o.status_changed_at)}</span>
                         <span>{formatShekel(o.total_cents)}</span>
-                        <StatusBadge status={o.order_status} />
+                        <StatusBadge status={o.order_status} fulfillment={o.fulfillment_method} />
                       </span>
                     </button>
                   </li>

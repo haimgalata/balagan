@@ -32,8 +32,9 @@ export function OrderActionBar({ order, role, actions, size = "md", onMoved }: O
     return () => window.clearTimeout(timer);
   }, [armedComplete]);
   const busy = actions.busyId === order.id;
-  const advance = advanceAction(order.order_status);
-  const back = backAction(order.order_status, role);
+  const fulfillment = order.fulfillment_method ?? "delivery";
+  const advance = advanceAction(order.order_status, fulfillment);
+  const back = backAction(order.order_status, role, fulfillment);
 
   const run = async (to: Parameters<typeof actions.move>[1], reason?: string) => {
     const ok = await actions.move(order, to, reason);
@@ -53,7 +54,7 @@ export function OrderActionBar({ order, role, actions, size = "md", onMoved }: O
           }}
         >
           {busy && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
-          {advance.to === "completed" && armedComplete ? "לחצו שוב לאישור מסירה" : advance.label}
+          {advance.to === "completed" && armedComplete ? (fulfillment === "pickup" ? "לחצו שוב לאישור איסוף" : "לחצו שוב לאישור מסירה") : advance.label}
         </Button>
       )}
       {back && (

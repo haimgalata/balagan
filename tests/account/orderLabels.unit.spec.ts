@@ -19,6 +19,14 @@ test("every status the store uses has a customer-facing Hebrew label; unknown on
   expect(orderStatusTone("cancelled")).toBe("bad");
 });
 
+test("pickup orders (migration 0015) read as pickup: ready to collect, collected, no address", () => {
+  expect(orderStatusLabel("ready_for_pickup", "pickup")).toBe("מוכנה לאיסוף");
+  expect(orderStatusTone("ready_for_pickup")).toBe("active");
+  expect(orderStatusLabel("completed", "pickup")).toBe("נאספה");
+  expect(orderStatusLabel("completed")).toBe("נמסרה");
+  expect(orderAddressLine(order({ fulfillmentMethod: "pickup", street: "", houseNumber: "" }))).toBe("איסוף עצמי מהחנות");
+});
+
 test("dates are Israel dates, whatever the visitor's own timezone", () => {
   // 21:30 UTC on 19 Sep is already 20 Sep in Israel (UTC+3 in September)
   expect(formatOrderDate("2026-09-19T21:30:00Z")).toBe("20.9.2026");

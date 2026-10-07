@@ -143,6 +143,107 @@ function StoreHoursSection({ client, initial, busy, run }: { client: SupabaseCli
   );
 }
 
+/**
+ * How orders are received (pickup OR delivery — the storefront offers one at a time) and which payment methods are
+ * offered, plus the store address pickup customers see. Migration 0015; the database refuses an order for a method
+ * that is off, whatever the client sends.
+ */
+function FulfillmentSection({ client, initialSettings, busy, run }: { client: SupabaseClient; initialSettings: BusinessSettingsRow; busy: boolean; run: Run }) {
+  const [mode, setMode] = useState<"pickup" | "delivery">(() => (initialSettings.pickup_enabled ? "pickup" : "delivery"));
+  const [cash, setCash] = useState(() => initialSettings.cash_enabled !== false);
+  const [card, setCard] = useState(() => initialSettings.card_enabled === true);
+  const [address, setAddress] = useState(() => initialSettings.store_address_text ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  if (initialSettings.pickup_enabled === undefined) {
+    return (
+      <fieldset className="flex flex-col gap-2 rounded-lg border border-brand-border bg-brand-bg-elevated p-4">
+        <legend className="px-1 text-base font-semibold text-brand-text">קבלת הזמנה ותשלום</legend>
+        <p role="alert" className="text-sm text-brand-danger">
+          יש להריץ את supabase/migrations/0015_pickup.sql במסד הנתונים כדי להגדיר איסוף עצמי ואמצעי תשלום.
+        </p>
+      </fieldset>
+    );
+  }
+
+  const save = async () => {
+    const trimmed = address.trim();
+    const problem =
+      trimmed.length > 120 ? "כתובת החנות ארוכה מדי (עד 120 תווים)."
+      : mode === "pickup" && trimmed === "" ? "באיסוף עצמי יש להזין את כתובת החנות — הלקוחות יראו אותה."
+      : null;
+    setError(problem);
+    if (problem) return;
+    await run(
+      () =>
+        updateBusinessSettings(client, {
+          pickup_enabled: mode === "pickup",
+          delivery_enabled: mode === "delivery",
+          cash_enabled: cash,
+          card_enabled: card,
+          store_address_text: trimmed === "" ? null : trimmed,
+        }),
+      "הגדרות קבלת ההזמנה והתשלום נשמרו"
+    );
+  };
+
+  const choice = (value: "pickup" | "delivery", label: string, hint: string) => (
+    <label className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${mode === value ? "border-brand-gold bg-brand-gold/10" : "border-brand-border"}`}>
+      <input type="radio" name="fulfillment-mode" checked={mode === value} disabled={busy} onChange={() => setMode(value)} className="mt-0.5 accent-[rgb(var(--color-gold))]" />
+      <span>
+        <span className="block font-medium text-brand-text">{label}</span>
+        <span className="block text-xs text-brand-text-muted">{hint}</span>
+      </span>
+    </label>
+  );
+
+  return (
+    <fieldset className="flex flex-col gap-3 rounded-lg border border-brand-border bg-brand-bg-elevated p-4" data-testid="fulfillment-settings">
+      <legend className="px-1 text-base font-semibold text-brand-text">קבלת הזמנה ותשלום</legend>
+
+      <div role="radiogroup" aria-label="אופן קבלת הזמנה" className="grid gap-2 sm:grid-cols-2">
+        {choice("pickup", "איסוף עצמי מהחנות", "בלי כתובת, בלי דמי משלוח ובלי מינימום הזמנה.")}
+        {choice("delivery", "משלוח (נתיבות)", "כתובת למשלוח, דמי משלוח ומינימום הזמנה כפי שמוגדר למטה.")}
+      </div>
+
+      <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+        כתובת החנות (מוצגת ללקוחות באיסוף עצמי)
+        <input type="text" value={address} maxLength={120} disabled={busy} onChange={(e) => setAddress(e.target.value)} placeholder="לדוגמה: הרצל 1, נתיבות" className={`${inputClasses} w-full max-w-md`} />
+      </label>
+
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium text-brand-text">אמצעי תשלום באתר</p>
+        <label className="flex items-center gap-2 text-sm text-brand-text">
+          <input type="checkbox" checked={cash} disabled={busy} onChange={(e) => setCash(e.target.checked)} className="h-4 w-4 accent-[rgb(var(--color-gold))]" />
+          מזומן (בעת האיסוף / המסירה)
+        </label>
+        <label className="flex items-center gap-2 text-sm text-brand-text">
+          <input type="checkbox" checked={card} disabled={busy} onChange={(e) => setCard(e.target.checked)} className="h-4 w-4 accent-[rgb(var(--color-gold))]" />
+          כרטיס אשראי
+        </label>
+        <p className="text-xs text-brand-text-muted">תשלום באשראי יופיע ללקוחות רק אחרי חיבור חברת סליקה. עד אז הוא מוצג להם כ״בקרוב״.</p>
+        {!cash && !card && <p className="text-xs text-brand-danger">כשכל אמצעי התשלום כבויים, אי אפשר להשלים הזמנה באתר.</p>}
+      </div>
+
+      {error && (
+        <p role="alert" className="text-xs text-brand-danger">
+          {error}
+        </p>
+      )}
+      <Button onClick={() => void save()} disabled={busy} className="self-start">
+        {busy ? (
+          <>
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            שומר…
+          </>
+        ) : (
+          "שמירה"
+        )}
+      </Button>
+    </fieldset>
+  );
+}
+
 function OrdersSection({
   client, initialHours, initialSettings, currentOrdersPaused, busy, run,
 }: {
@@ -210,7 +311,7 @@ function OrdersSection({
 
       <div className="flex flex-wrap gap-4">
         <label className="flex flex-col gap-1.5 text-sm text-brand-text">
-          מינימום הזמנה (₪)
+          מינימום הזמנה למשלוח (₪)
           <input type="number" step="0.01" min="0" dir="ltr" value={minOrder} disabled={busy} onChange={(e) => setMinOrder(e.target.value)} className={`${inputClasses} w-32`} />
         </label>
         <label className="flex flex-col gap-1.5 text-sm text-brand-text">
@@ -275,6 +376,7 @@ export function BusinessSettingsPage({ client }: { client: SupabaseClient }) {
             busy={busy}
             run={run}
           />
+          <FulfillmentSection client={client} initialSettings={data.settings} busy={busy} run={run} />
         </div>
       )}
     </div>

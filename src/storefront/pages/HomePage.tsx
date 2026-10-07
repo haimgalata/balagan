@@ -2,6 +2,7 @@ import { Hero } from "@/storefront/components/Hero";
 import { BusinessInfoBar } from "@/storefront/components/BusinessInfoBar";
 import { SecurePaymentBar } from "@/storefront/components/SecurePaymentBar";
 import { CategoryBrowser } from "@/storefront/components/CategoryBrowser";
+import { LastOrderStripLoader } from "@/storefront/components/LastOrderStripLoader";
 
 /**
  * Homepage — section order is just JSX order below: navbar (in `App.tsx`),
@@ -13,6 +14,7 @@ export function HomePage() {
   return (
     <main id="top">
       <h1 className="sr-only">בלאגן - מרכז הסיגריות והטבק</h1>
+      <LastOrderStripLoader />
       <Hero />
       <BusinessInfoBar />
       <SecurePaymentBar />

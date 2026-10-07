@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/shared/ui/Button";
-import { CANCEL_REASONS, OTHER_REASON, cancelHoldsStock, type OrderRow } from "@/admin/orders/orderModel";
+import { OTHER_REASON, cancelHoldsStock, cancelReasons, type OrderRow } from "@/admin/orders/orderModel";
 
 interface CancelOrderDialogProps {
-  order: Pick<OrderRow, "order_number" | "order_status">;
+  order: Pick<OrderRow, "order_number" | "order_status" | "fulfillment_method">;
   busy: boolean;
   error: string | null;
   onConfirm: (reason: string) => void;
@@ -44,7 +44,7 @@ export function CancelOrderDialog({ order, busy, error, onConfirm, onClose }: Ca
 
         <fieldset className="mb-3 grid gap-2">
           <legend className="mb-1 text-sm font-medium">סיבת הביטול (חובה)</legend>
-          {CANCEL_REASONS.map((r) => (
+          {cancelReasons(order.fulfillment_method).map((r) => (
             <label key={r} className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2.5 text-sm ${choice === r ? "border-brand-gold bg-brand-gold/10" : "border-brand-border"}`}>
               <input type="radio" name="cancel-reason" value={r} checked={choice === r} onChange={() => setChoice(r)} className="accent-[rgb(var(--color-gold))]" />
               {r}

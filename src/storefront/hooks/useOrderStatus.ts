@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 import { useBusinessSettings } from "@/storefront/context/BusinessSettingsContext";
 import { computeScheduleStatus } from "@/storefront/lib/scheduleStatus";
+import { getOrderingRules, type FulfillmentMethod } from "@/storefront/lib/fulfillment";
 
 interface OrderStatus {
   /** Whether the site is accepting online orders RIGHT NOW: the schedule says open AND the manual pause is off. */
   isOpen: boolean;
   /** Today's configured order hours, regardless of the manual pause (so a paused banner still shows when it'll reopen). */
   hoursLabel: string;
+  /** Pickup from the store or delivery (see fulfillment.ts). */
+  fulfillment: FulfillmentMethod;
+  /** 0 for pickup. */
   minOrderCents: number;
+  /** 0 for pickup. */
   deliveryFeeCents: number;
 }
 
@@ -27,10 +32,12 @@ export function useOrderStatus(): OrderStatus {
     return () => clearInterval(interval);
   }, [settings.order_hours]);
 
+  const rules = getOrderingRules(settings);
   return {
     isOpen: schedule.isOpen && !settings.orders_paused,
     hoursLabel: schedule.hoursLabel,
-    minOrderCents: settings.min_order_cents,
-    deliveryFeeCents: settings.delivery_fee_cents,
+    fulfillment: rules.fulfillment,
+    minOrderCents: rules.minOrderCents,
+    deliveryFeeCents: rules.deliveryFeeCents,
   };
 }

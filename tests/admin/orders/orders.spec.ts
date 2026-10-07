@@ -105,6 +105,27 @@ test.describe("the Active board", () => {
     await expect(page.getByTestId("finished-today")).toContainText("#1001");
   });
 
+  test("a PICKUP order goes new -> preparing -> ready for pickup -> collected, with no address and no delivery step", async ({ page }) => {
+    const db = createFakeOrdersDatabase([
+      makeOrder(1101, { fulfillment_method: "pickup", city: null, street: null, house_number: null, floor: null, apartment: null, delivery_fee_cents: 0, total_cents: 12000 }),
+    ]);
+    await open(page, db);
+    await expect(card(page, 1101)).toContainText("איסוף עצמי מהחנות");
+    await expect(card(page, 1101)).toContainText("לגבות באיסוף");
+    await card(page, 1101).getByRole("button", { name: "התחל הכנה" }).click();
+    await expect(card(page, 1101).getByRole("button", { name: "יצאה למשלוח" })).toHaveCount(0);
+    await card(page, 1101).getByRole("button", { name: "מוכנה לאיסוף" }).click();
+    await expect(lane(page, "ready_for_pickup").getByTestId("order-card")).toHaveCount(1);
+    expect(db.byNumber(1101).order_status).toBe("ready_for_pickup");
+
+    await card(page, 1101).getByRole("button", { name: "נאספה" }).click(); // first tap only arms it
+    await card(page, 1101).getByRole("button", { name: "לחצו שוב לאישור איסוף" }).click();
+    await expect(card(page, 1101)).toHaveCount(0);
+    expect(db.byNumber(1101)).toMatchObject({ order_status: "completed", payment_status: "paid" });
+    await page.getByTestId("finished-today").locator("summary").click();
+    await expect(page.getByTestId("finished-today")).toContainText("נאספה");
+  });
+
   test("staff can step an order one status back", async ({ page }) => {
     const db = seed();
     await open(page, db);

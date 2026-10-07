@@ -9,14 +9,16 @@ import type { OrderActions } from "@/admin/orders/useOrderActions";
 import {
   PAYMENT_METHOD_LABEL,
   PAYMENT_STATUS_LABEL,
-  STATUS_LABEL,
   STOCK_RETURN_LABEL,
   addressDetails,
   addressLine,
+  isPickup,
+  statusLabel,
   formatDateTime,
   formatShekel,
   fullName,
   paidButDead,
+  type FulfillmentMethod,
   type OrderEventRow,
   type OrderRow,
   type OrderStatus,
@@ -35,23 +37,23 @@ interface OrderDetailContentProps {
   version: number;
 }
 
-export const StatusBadge = ({ status }: { status: OrderStatus }) => {
+export const StatusBadge = ({ status, fulfillment }: { status: OrderStatus; fulfillment?: FulfillmentMethod }) => {
   const tone =
     status === "confirmed" ? "bg-brand-gold/20 text-brand-gold"
-    : status === "completed" ? "bg-brand-success/20 text-brand-success"
+    : status === "completed" || status === "ready_for_pickup" ? "bg-brand-success/20 text-brand-success"
     : status === "cancelled" || status === "expired" ? "bg-brand-danger/20 text-brand-danger"
     : "bg-brand-bg text-brand-text";
-  return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}>{STATUS_LABEL[status]}</span>;
+  return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}>{statusLabel(status, fulfillment)}</span>;
 };
 
 const ACTOR_LABEL: Record<string, string> = { system: "המערכת", customer: "הלקוח" };
 
-function describeEvent(e: OrderEventRow): string {
+function describeEvent(e: OrderEventRow, fulfillment?: FulfillmentMethod): string {
   switch (e.kind) {
     case "created":
       return "ההזמנה התקבלה";
     case "status":
-      return `סטטוס: ${STATUS_LABEL[e.to_value as OrderStatus] ?? e.to_value}${e.reason ? ` — ${e.reason}` : ""}`;
+      return `סטטוס: ${statusLabel(e.to_value as OrderStatus, fulfillment) ?? e.to_value}${e.reason ? ` — ${e.reason}` : ""}`;
     case "payment":
       return `תשלום: ${PAYMENT_STATUS_LABEL[e.to_value as PaymentStatus] ?? e.to_value}`;
     case "stock_return":
@@ -118,7 +120,7 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
     <div className="space-y-5 p-4 text-brand-text" data-testid="order-detail">
       <header className="flex flex-wrap items-center gap-2">
         <h3 className="text-xl font-bold">#{order.order_number}</h3>
-        <StatusBadge status={order.order_status} />
+        <StatusBadge status={order.order_status} fulfillment={order.fulfillment_method} />
         <span className="text-sm text-brand-text-muted">{formatDateTime(order.created_at)}</span>
       </header>
 
@@ -141,8 +143,8 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
         </p>
       )}
 
-      <section aria-label="לקוח ומשלוח">
-        <h4 className="mb-2 text-sm font-semibold text-brand-gold">לקוח ומשלוח</h4>
+      <section aria-label={isPickup(order) ? "לקוח ואיסוף" : "לקוח ומשלוח"}>
+        <h4 className="mb-2 text-sm font-semibold text-brand-gold">{isPickup(order) ? "לקוח ואיסוף" : "לקוח ומשלוח"}</h4>
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="שם">{fullName(order)}</Field>
           <Field label="טלפון">
@@ -151,9 +153,9 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
               {order.phone}
             </a>
           </Field>
-          <Field label="כתובת">{addressLine(order)}</Field>
+          <Field label={isPickup(order) ? "אופן קבלה" : "כתובת"}>{addressLine(order)}</Field>
           {details.length > 0 && <Field label="פרטי כניסה">{details.join(" · ")}</Field>}
-          {order.delivery_notes && <Field label="הערות למשלוח">{order.delivery_notes}</Field>}
+          {order.delivery_notes && <Field label={isPickup(order) ? "הערות" : "הערות למשלוח"}>{order.delivery_notes}</Field>}
           {order.email && (
             <Field label="אימייל">
               <span dir="ltr">{order.email}</span>
@@ -189,10 +191,12 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
             <dt className="text-brand-text-muted">סכום ביניים</dt>
             <dd>{formatShekel(order.subtotal_cents)}</dd>
           </div>
-          <div className="flex justify-between">
-            <dt className="text-brand-text-muted">משלוח</dt>
-            <dd>{formatShekel(order.delivery_fee_cents)}</dd>
-          </div>
+          {!isPickup(order) && (
+            <div className="flex justify-between">
+              <dt className="text-brand-text-muted">משלוח</dt>
+              <dd>{formatShekel(order.delivery_fee_cents)}</dd>
+            </div>
+          )}
           {order.discount_cents > 0 && (
             <div className="flex justify-between">
               <dt className="text-brand-text-muted">
@@ -221,7 +225,7 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
         <ol className="space-y-2 border-s border-brand-border ps-4">
           {events.map((e) => (
             <li key={e.id} className="text-sm">
-              <div>{describeEvent(e)}</div>
+              <div>{describeEvent(e, order.fulfillment_method)}</div>
               <div className="text-xs text-brand-text-muted">
                 {formatDateTime(e.created_at)} · {ACTOR_LABEL[e.actor_label] ?? e.actor_label}
               </div>

@@ -211,7 +211,7 @@ export function OrdersHistoryPage({ client, role }: { client: SupabaseClient; ro
                       </td>
                       <td className={RT_CELL}>
                         <MobileLabel>סטטוס</MobileLabel>
-                        <StatusBadge status={o.order_status} />
+                        <StatusBadge status={o.order_status} fulfillment={o.fulfillment_method} />
                       </td>
                     </tr>
                   ))}

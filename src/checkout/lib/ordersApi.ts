@@ -10,6 +10,7 @@
 import type { CatalogConfig } from "@/storefront/lib/catalogApi";
 import type { PurchaseOption } from "@/storefront/types";
 import { describeCouponReason, isCouponErrorCode } from "@/checkout/lib/couponMessages";
+import type { FulfillmentMethod } from "@/storefront/lib/fulfillment";
 
 export type PaymentMethod = "cash" | "card";
 
@@ -20,6 +21,8 @@ export interface OrderItemPayload {
 }
 
 export interface OrderCustomerPayload {
+  /** Pickup orders carry no address (the database ignores one if sent). Missing = delivery, as before migration 0015. */
+  fulfillmentMethod?: FulfillmentMethod;
   firstName: string;
   lastName: string;
   phone: string;
@@ -42,6 +45,7 @@ export interface CreateOrderResult {
   orderStatus: string;
   paymentStatus: string;
   paymentMethod: PaymentMethod;
+  fulfillmentMethod: FulfillmentMethod;
   totalCents: number;
   /** What a club coupon took off (0 when none). */
   discountCents: number;
@@ -61,7 +65,9 @@ export class OrderCreationError extends Error {
 const REQUEST_TIMEOUT_MS = 10_000;
 
 function toRpcPayload(items: OrderItemPayload[], paymentMethod: PaymentMethod, customer: OrderCustomerPayload, couponCode?: string) {
+  const pickup = customer.fulfillmentMethod === "pickup";
   return {
+    fulfillment_method: pickup ? "pickup" : "delivery",
     // only the CODE is sent: the database validates it for the caller's own identity and prices it itself
     ...(couponCode ? { coupon_code: couponCode } : {}),
     items: items.map((item) => ({ product_id: item.productId, option: item.option, quantity: item.quantity })),
@@ -71,13 +77,13 @@ function toRpcPayload(items: OrderItemPayload[], paymentMethod: PaymentMethod, c
       last_name: customer.lastName,
       phone: customer.phone,
       email: customer.email || null,
-      city: customer.city,
-      street: customer.street,
-      house_number: customer.houseNumber,
-      entrance: customer.entrance || null,
-      floor: customer.floor || null,
-      apartment: customer.apartment || null,
-      intercom_code: customer.intercomCode || null,
+      city: pickup ? null : customer.city,
+      street: pickup ? null : customer.street,
+      house_number: pickup ? null : customer.houseNumber,
+      entrance: (!pickup && customer.entrance) || null,
+      floor: (!pickup && customer.floor) || null,
+      apartment: (!pickup && customer.apartment) || null,
+      intercom_code: (!pickup && customer.intercomCode) || null,
       notes: customer.notes || null,
       age_confirmed: customer.ageConfirmed,
       terms_accepted: customer.termsAccepted,
@@ -99,6 +105,7 @@ interface RpcCreateOrderResult {
   order_status: string;
   payment_status: string;
   payment_method: string;
+  fulfillment_method?: string;
   total_cents: number;
   discount_cents?: number;
   payment_attempt_id: string | null;
@@ -173,6 +180,7 @@ export async function createOrder(
       orderStatus: body.order_status,
       paymentStatus: body.payment_status,
       paymentMethod: body.payment_method as PaymentMethod,
+      fulfillmentMethod: body.fulfillment_method === "pickup" ? "pickup" : "delivery",
       totalCents: body.total_cents,
       discountCents: typeof body.discount_cents === "number" ? body.discount_cents : 0,
       paymentAttemptId: body.payment_attempt_id,
@@ -194,6 +202,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   AGE_NOT_CONFIRMED: "יש לאשר את הצהרת הגיל כדי להמשיך.",
   TERMS_NOT_ACCEPTED: "יש לאשר את התקנון כדי להמשיך.",
   STATIC_MODE_UNAVAILABLE: "לא ניתן להשלים הזמנה במצב זה.",
+  ORDERS_CLOSED: "ההזמנות באתר סגורות כרגע. אפשר לנסות שוב בשעות ההזמנה.",
+  FULFILLMENT_UNAVAILABLE: "אופן קבלת ההזמנה השתנה בינתיים. רעננו את הדף ונסו שוב.",
+  PAYMENT_METHOD_UNAVAILABLE: "אופן התשלום שנבחר אינו זמין כרגע. רעננו את הדף ונסו שוב.",
 };
 
 /** Hebrew message for an order-creation failure; falls back to a generic retry message for anything not

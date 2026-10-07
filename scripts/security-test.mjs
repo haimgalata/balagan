@@ -147,11 +147,24 @@ const ORDER_PII_KEYS = /"(first_name|last_name|phone|email|street|house_number|e
 
 let adminToken = "", userToken = "", userId = "", staffToken = "";
 const orderIds = []; // probe orders created during the run (order_items/payment_attempts/payment_events cascade-delete with them)
+// Migration 0015 refuses orders outside the 'orders' schedule / while paused, and per disabled method. The probe orders
+// below must work at any hour, so while the test runs ordering is opened (all methods on, today's order hours
+// 00:00-23:59, pause off) and EXACTLY the original values are put back in cleanup(). The live site therefore accepts
+// orders around the clock for the minute or so the test takes — run it when that is acceptable.
+let ordersOpenedFor0015 = null;
 const created = { product: false, product2: false, productOrder: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
 
 async function cleanup() {
   section("Cleanup");
   const res = [];
+  if (ordersOpenedFor0015) {
+    const { settings, hours } = ordersOpenedFor0015;
+    const s1 = await rest("PATCH", "business_settings?id=eq.1", { token: adminToken, body: settings });
+    const s2 = await rest("PATCH", `business_hours?schedule_type=eq.orders&day_of_week=eq.${hours.day_of_week}`, { token: adminToken,
+      body: { is_open: hours.is_open, open_time: hours.open_time, close_time: hours.close_time } });
+    res.push(["ordering settings restored (0015)", s1.status < 300 && s2.status < 300]);
+    if (s1.status >= 300 || s2.status >= 300) console.log(`  RESTORE BY HAND in /admin/settings: ${JSON.stringify(ordersOpenedFor0015)}`);
+  }
   // orders first (order_items/payment_attempts/payment_events cascade with them) — deleted before the
   // products they reference, even though order_items.product_id would only be SET NULL, not blocked.
   // Since migration 0010 NOBODY can delete an order through the API (orders are history). On a project that
@@ -159,7 +172,7 @@ async function cleanup() {
   // goes back); whatever remains is listed below for removal in the SQL editor.
   if (orderIds.length) {
     await rest("DELETE", `orders?id=in.(${orderIds.join(",")})`, { token: adminToken });
-    const open = await rest("GET", `orders?id=in.(${orderIds.join(",")})&order_status=in.(confirmed,preparing,out_for_delivery)&select=id,order_status`, { token: adminToken });
+    const open = await rest("GET", `orders?id=in.(${orderIds.join(",")})&order_status=in.(confirmed,preparing,out_for_delivery,ready_for_pickup)&select=id,order_status`, { token: adminToken });
     for (const o of open.json ?? []) await rpc("transition_order", adminToken, { p_order_id: o.id, p_expected_status: o.order_status, p_to_status: "cancelled", p_reason: "zz-security-probe cleanup" });
   }
   if (created.image) res.push(["storage object", (await call("DELETE", `${URL_}/storage/v1/object/product-images`, { token: adminToken, body: { prefixes: [IMG] } })).status < 300]);
@@ -411,8 +424,10 @@ async function clubMemberChecks({ createOrder, orderPayload }) {
     r = await rpc("set_marketing_consent", mt, { p_granted: true, p_channels: ["sms"] });
     check("granting it again records the chosen channel", r.status === 200 && r.json?.marketing === true && JSON.stringify(r.json?.marketing_channels) === '["sms"]', `HTTP ${r.status} ${r.text.slice(0, 100)}`);
     r = await rest("GET", "customer_consents?select=kind,granted&order=id", { token: mt });
+    // The history is append-only and survives delete + re-join (same account id), so earlier runs' entries are still
+    // there: this run's join / withdraw / re-grant are the LAST three marketing entries.
     check("the member can read their own consent history (append-only: age, marketing on, off, on)",
-      Array.isArray(r.json) && r.json.filter((c) => c.kind === "marketing").map((c) => c.granted).join() === "true,false,true", `HTTP ${r.status} ${r.text.slice(0, 160)}`);
+      Array.isArray(r.json) && r.json.filter((c) => c.kind === "marketing").map((c) => c.granted).slice(-3).join() === "true,false,true", `HTTP ${r.status} ${r.text.slice(0, 160)}`);
   } finally {
     // ---- the right to be forgotten — and leave the test user as it was found
     r = await rpc("delete_my_account", mt);
@@ -523,6 +538,21 @@ async function main() {
     const st = await signIn(STAFF_EMAIL, STAFF_PASSWORD);
     if (st.error) { console.error(st.error); process.exit(1); }
     staffToken = st.token;
+  }
+
+  // ------------------------------------- 0015: open ordering for the probe orders (restored in cleanup)
+  const s0015 = await rest("GET", "business_settings?id=eq.1&select=orders_paused,pickup_enabled,delivery_enabled,cash_enabled,card_enabled", { token: adminToken });
+  if (s0015.status === 200 && s0015.json?.[0]) {
+    const today = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(
+      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", weekday: "short" }).format(new Date()));
+    const h = await rest("GET", `business_hours?schedule_type=eq.orders&day_of_week=eq.${today}&select=day_of_week,is_open,open_time,close_time`, { token: adminToken });
+    if (h.json?.[0]) {
+      ordersOpenedFor0015 = { settings: s0015.json[0], hours: h.json[0] };
+      await rest("PATCH", "business_settings?id=eq.1", { token: adminToken,
+        body: { orders_paused: false, delivery_enabled: true, cash_enabled: true, card_enabled: true } });
+      await rest("PATCH", `business_hours?schedule_type=eq.orders&day_of_week=eq.${today}`, { token: adminToken,
+        body: { is_open: true, open_time: "00:00", close_time: "23:59:59" } });
+    }
   }
 
   // ------------------------------------------------------- 0. admin sets up probes
@@ -1054,7 +1084,10 @@ async function main() {
     r = await rpc("get_order_status", ANON, { p_order_id: cash.json?.order_id });
     check("anon CAN call get_order_status()", r.status === 200 && r.json?.order_number === cash.json?.order_number, JSON.stringify(r.json));
     check("...status only: no PII, no address, no idempotency_key leaks out", !ORDER_PII_KEYS.test(r.text), r.text);
-    check("...response has exactly the narrow field set", Object.keys(r.json ?? {}).sort().join(",") === "order_number,order_status,payment_method,payment_status,total_cents");
+    // fulfillment_method since migration 0015 (the order-tracking page); without 0015 the old five fields
+    const narrow = Object.keys(r.json ?? {}).sort().join(",");
+    check("...response has exactly the narrow field set",
+      narrow === "fulfillment_method,order_number,order_status,payment_method,payment_status,total_cents" || narrow === "order_number,order_status,payment_method,payment_status,total_cents", narrow);
     r = await rpc("get_order_status", ANON, { p_order_id: randomUUID() });
     check("get_order_status() for a nonexistent order returns null, not an error or a hint either way", r.status === 200 && r.json === null, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
 

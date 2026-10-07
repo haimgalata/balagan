@@ -103,7 +103,7 @@ export function OrdersTab() {
                 <span className="text-xs text-brand-text-muted">{formatOrderDate(order.createdAt)}</span>
               </div>
               <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${TONE_CLASSES[orderStatusTone(order.status)]}`}>
-                {orderStatusLabel(order.status)}
+                {orderStatusLabel(order.status, order.fulfillmentMethod)}
               </span>
             </div>
 

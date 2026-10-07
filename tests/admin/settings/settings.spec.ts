@@ -35,7 +35,7 @@ test.describe("loading", () => {
     await expect(storeGroup(page).getByRole("checkbox", { name: "שבת" })).not.toBeChecked();
     await expect(storeGroup(page).getByText("סגור")).toBeVisible();
 
-    await expect(ordersGroup(page).getByLabel("מינימום הזמנה (₪)")).toHaveValue("50");
+    await expect(ordersGroup(page).getByLabel("מינימום הזמנה למשלוח (₪)")).toHaveValue("50");
     await expect(ordersGroup(page).getByLabel("דמי משלוח (₪)")).toHaveValue("15");
     await expect(page.getByRole("switch", { name: "השבתת הזמנות זמנית" })).toHaveAttribute("aria-checked", "false");
   });
@@ -83,7 +83,7 @@ test.describe("online orders", () => {
     await ordersGroup(page).getByRole("checkbox", { name: "שבת" }).check();
     await ordersGroup(page).getByLabel("הזמנות אונליין — שעת פתיחה ביום שבת").fill("10:00");
     await ordersGroup(page).getByLabel("הזמנות אונליין — שעת סגירה ביום שבת").fill("14:00");
-    await ordersGroup(page).getByLabel("מינימום הזמנה (₪)").fill("60");
+    await ordersGroup(page).getByLabel("מינימום הזמנה למשלוח (₪)").fill("60");
     await ordersGroup(page).getByLabel("דמי משלוח (₪)").fill("20");
     await ordersGroup(page).getByRole("button", { name: "שמירה" }).click();
 
@@ -106,7 +106,7 @@ test.describe("online orders", () => {
 
   test("the manual pause switch applies immediately, independent of the hours/amounts form", async ({ page }) => {
     const db = await openSettings(page);
-    await ordersGroup(page).getByLabel("מינימום הזמנה (₪)").fill("999"); // unsaved edit in the same section
+    await ordersGroup(page).getByLabel("מינימום הזמנה למשלוח (₪)").fill("999"); // unsaved edit in the same section
     await page.getByRole("switch", { name: "השבתת הזמנות זמנית" }).click();
 
     await expect(page.getByRole("status")).toContainText("הזמנות אונליין הושבתו זמנית");

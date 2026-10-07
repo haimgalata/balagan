@@ -199,7 +199,7 @@ test("the order carries only the CODE and the member token â€” never an amount â
   expect(sent).toHaveLength(1);
   expect(sent[0].authorization).toBe(MEMBER_TOKEN);
   expect(sent[0].payload.coupon_code).toBe("CLUB20");
-  expect(Object.keys(sent[0].payload).sort(), "no discount, total or coupon id is ever sent").toEqual(["coupon_code", "customer", "items", "payment_method"]);
+  expect(Object.keys(sent[0].payload).sort(), "no discount, total or coupon id is ever sent").toEqual(["coupon_code", "customer", "fulfillment_method", "items", "payment_method"]);
 });
 
 test("removing the coupon restores the total and the next order has no coupon", async ({ page }) => {

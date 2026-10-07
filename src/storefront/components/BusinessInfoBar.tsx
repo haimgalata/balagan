@@ -4,7 +4,8 @@ import { formatPrice } from "@/storefront/lib/pricing";
 /**
  * Thin strip rendered right after `Hero`: whether the site is taking ONLINE ORDERS right now (a separate
  * concept from the physical store's own hours — see `Hero.tsx`'s pill for that) + today's order hours +
- * minimum order + delivery fee, all from `useOrderStatus` (BusinessSettingsContext).
+ * minimum order + delivery fee — or, when orders are picked up at the store, just "איסוף עצמי מהחנות" — all from
+ * `useOrderStatus` (BusinessSettingsContext).
  *
  * `sticky top-0` — it sits in normal document flow immediately after the
  * hero, then sticks flush to the very top of the viewport once scrolled up
@@ -20,7 +21,7 @@ import { formatPrice } from "@/storefront/lib/pricing";
  * changes.
  */
 export function BusinessInfoBar() {
-  const { isOpen, hoursLabel, minOrderCents, deliveryFeeCents } = useOrderStatus();
+  const { isOpen, hoursLabel, fulfillment, minOrderCents, deliveryFeeCents } = useOrderStatus();
 
   return (
     <div className="sticky top-0 z-30 border-b border-brand-border bg-brand-bg-elevated">
@@ -48,26 +49,35 @@ export function BusinessInfoBar() {
           </span>
         </span>
 
-        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
-            aria-hidden="true"
-          />
-
-          <span>
-            <span className="sm:hidden">מינימום ₪{formatPrice(minOrderCents)}</span>
-            <span className="hidden sm:inline">מינימום הזמנה ₪{formatPrice(minOrderCents)}</span>
+        {fulfillment === "pickup" ? (
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted" aria-hidden="true" />
+            <span>איסוף עצמי מהחנות</span>
           </span>
-        </span>
+        ) : (
+          <>
+            <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
+                aria-hidden="true"
+              />
 
-        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
-            aria-hidden="true"
-          />
+              <span>
+                <span className="sm:hidden">מינימום ₪{formatPrice(minOrderCents)}</span>
+                <span className="hidden sm:inline">מינימום הזמנה ₪{formatPrice(minOrderCents)}</span>
+              </span>
+            </span>
 
-          <span>משלוח ₪{formatPrice(deliveryFeeCents)}</span>
-        </span>
+            <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-brand-text-muted sm:text-sm">
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text-muted"
+                aria-hidden="true"
+              />
+
+              <span>משלוח ₪{formatPrice(deliveryFeeCents)}</span>
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

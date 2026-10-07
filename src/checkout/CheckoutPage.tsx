@@ -21,6 +21,11 @@ import {
   type OrderItemPayload,
 } from "@/checkout/lib/ordersApi";
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/checkout/lib/idempotency";
+import { getOrderingRules } from "@/storefront/lib/fulfillment";
+import { useOrderStatus } from "@/storefront/hooks/useOrderStatus";
+import { useStoreStatus } from "@/storefront/hooks/useStoreStatus";
+import { saveLastOrder } from "@/order/lastOrder";
+import { orderPath } from "@/order/orderRoute";
 
 const STORE_PHONE = "08-994-5190";
 const STORE_PHONE_HREF = "tel:089945190";
@@ -61,16 +66,22 @@ function FullPageState({ children }: { children: ReactNode }) {
   return <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center">{children}</div>;
 }
 
+function successText(order: CreateOrderResult): string {
+  if (order.paymentMethod !== "cash") return "בקרוב תתאפשר השלמת התשלום ישירות באתר.";
+  return order.fulfillmentMethod === "pickup"
+    ? `ההזמנה אושרה ונכנסת להכנה. התשלום (₪${formatPrice(order.totalCents)}) יתבצע במזומן בעת האיסוף מהחנות.`
+    : `ההזמנה אושרה ומחכה למשלוח — התשלום (₪${formatPrice(order.totalCents)}) יתבצע במזומן במעמד המסירה.`;
+}
+
 function SuccessPanel({ order }: { order: CreateOrderResult }) {
   return (
     <FullPageState>
       <h1 className="text-lg font-semibold text-brand-text">ההזמנה התקבלה!</h1>
       <p className="text-2xl font-bold text-brand-gold">#{order.orderNumber}</p>
-      <p className="max-w-sm text-sm text-brand-text-muted">
-        {order.paymentMethod === "cash"
-          ? `ההזמנה אושרה ומחכה למשלוח — התשלום (₪${formatPrice(order.totalCents)}) יתבצע במזומן במעמד המסירה.`
-          : "בקרוב תתאפשר השלמת התשלום ישירות באתר."}
-      </p>
+      <p className="max-w-sm text-sm text-brand-text-muted">{successText(order)}</p>
+      <Button onClick={() => window.location.assign(orderPath(order.orderId))}>
+        {order.fulfillmentMethod === "pickup" ? "מעקב — מתי ההזמנה מוכנה לאיסוף" : "מעקב אחרי ההזמנה"}
+      </Button>
       {order.discountCents > 0 && <p className="text-sm text-brand-text-muted">כולל הנחת מועדון בסך ₪{formatPrice(order.discountCents)}.</p>}
       <p className="text-sm text-brand-text-muted">
         שאלות לגבי ההזמנה?{" "}
@@ -110,6 +121,9 @@ export function CheckoutPage() {
   const { lines, totalPriceCents, clearCart } = useCart();
   const { status: catalogStatus } = useCatalog();
   const { settings } = useBusinessSettings();
+  const rules = getOrderingRules(settings);
+  const { isOpen: ordersOpen, hoursLabel: orderHoursLabel } = useOrderStatus();
+  const store = useStoreStatus();
   const validation = useCheckoutValidation();
   const [submitting, setSubmitting] = useState(false);
   // Snapshotting `items` at the moment of submit (rather than re-reading `lines` once validation settles)
@@ -142,7 +156,7 @@ export function CheckoutPage() {
     if (isMember) clearGuestDetails(); // once someone is a member, their profile is the memory
   }, [isMember]);
 
-  const belowMinimum = totalPriceCents < settings.min_order_cents;
+  const belowMinimum = totalPriceCents < rules.minOrderCents;
 
   // Nothing to check out (emptied, or a direct/bookmarked visit) — nothing here for the customer to do.
   // Gated on `catalogStatus === "ready"`: on a first-ever visit in "supabase" mode the catalog fetch is
@@ -157,7 +171,7 @@ export function CheckoutPage() {
   useEffect(() => {
     if (!submitting || validation.phase === "checking") return;
     setSubmitting(false);
-    if (validation.phase !== "ready" || validation.blockedLines.length > 0 || belowMinimum || !pending) {
+    if (validation.phase !== "ready" || validation.blockedLines.length > 0 || belowMinimum || !ordersOpen || !pending) {
       setPending(null);
       return; // stay on the form; the existing notices above already explain why
     }
@@ -185,8 +199,10 @@ export function CheckoutPage() {
         if (!result) return;
         clearIdempotencyKey();
         clearCart();
+        saveLastOrder({ id: result.orderId, number: result.orderNumber, placedAt: Date.now() });
         if (member && club) void club.refreshProfile(); // the order just taught the profile their name/address
-        else saveGuestDetails(details);
+        // a pickup order has no address: keep the one remembered from an earlier delivery order
+        else saveGuestDetails(details.fulfillmentMethod === "pickup" && remembered ? { ...details, street: remembered.street, houseNumber: remembered.houseNumber, entrance: remembered.entrance, floor: remembered.floor, apartment: remembered.apartment, intercomCode: remembered.intercomCode } : details);
         setOrder(result);
       })
       .catch((error: unknown) => {
@@ -194,7 +210,7 @@ export function CheckoutPage() {
         if (code.startsWith("COUPON_")) coupon.rejectFromServer(code); // the database refused the coupon: drop it, keep the order
         setOrderError(code);
       });
-  }, [submitting, validation.phase, validation.blockedLines, belowMinimum, pending]);
+  }, [submitting, validation.phase, validation.blockedLines, belowMinimum, ordersOpen, pending]);
 
   if (order) {
     return (
@@ -265,8 +281,14 @@ export function CheckoutPage() {
               <Notice kind="danger">יש להתאים את הכמות של הפריטים המסומנים למעלה לפני שממשיכים.</Notice>
             )}
 
+            {!ordersOpen && (
+              <Notice kind="danger">
+                ההזמנות באתר סגורות כרגע{orderHoursLabel !== "סגור היום" ? ` (שעות הזמנה היום: ${orderHoursLabel})` : ""}.
+              </Notice>
+            )}
+
             {belowMinimum && (
-              <Notice kind="danger">נדרשים עוד ₪{formatPrice(settings.min_order_cents - totalPriceCents)} להשלמת מינימום ההזמנה.</Notice>
+              <Notice kind="danger">נדרשים עוד ₪{formatPrice(rules.minOrderCents - totalPriceCents)} להשלמת מינימום ההזמנה.</Notice>
             )}
 
             {orderError && <Notice kind="danger">{describeOrderError(orderError)}</Notice>}
@@ -275,6 +297,11 @@ export function CheckoutPage() {
 
             <DetailsForm
               key={member ? `member-${member.profile.id}` : `guest-${memoryVersion}`}
+              fulfillment={rules.fulfillment}
+              storeAddress={rules.storeAddress}
+              storeHoursLabel={store.hoursLabel}
+              cashEnabled={rules.cashEnabled}
+              cardEnabled={rules.cardEnabled}
               prefill={member ? memberPrefill : remembered ?? undefined}
               lockedPhone={member ? formatLocalPhone(member.profile.phone) : undefined}
               savedAddresses={member ? addresses.addresses : undefined}
@@ -288,7 +315,7 @@ export function CheckoutPage() {
                     }
                   : undefined
               }
-              disabled={validation.phase === "checking" || validation.blockedLines.length > 0 || belowMinimum}
+              disabled={validation.phase === "checking" || validation.blockedLines.length > 0 || belowMinimum || !ordersOpen}
               busy={submitting}
               onSubmit={(details) => {
                 const items = lines.map((line) => ({ productId: line.product.id, option: line.option, quantity: line.quantity }));

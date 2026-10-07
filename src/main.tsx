@@ -4,6 +4,7 @@ import App from "./App.tsx";
 import { isAdminPathname } from "./admin/adminRoute";
 import { isCheckoutPathname } from "./checkout/checkoutRoute";
 import { isAccountPathname } from "./account/accountRoute";
+import { isOrderPathname } from "./order/orderRoute";
 import "./index.css";
 
 const root = createRoot(document.getElementById("root")!);
@@ -24,6 +25,15 @@ if (isAdminPathname(window.location.pathname)) {
     root.render(
       <StrictMode>
         <CheckoutApp />
+      </StrictMode>
+    );
+  });
+} else if (isOrderPathname(window.location.pathname)) {
+  // A customer following one order (the link on the success screen / the homepage strip). Loaded on demand too.
+  void import("./order/OrderApp").then(({ default: OrderApp }) => {
+    root.render(
+      <StrictMode>
+        <OrderApp />
       </StrictMode>
     );
   });

@@ -21,6 +21,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0012_customers.sql` | Balagan Club (registered = member): `customers`, append-only `customer_consents`, `customer_addresses` (max 5), `normalize_il_phone()` + `orders.phone_e164`, triggers that attach a member's order and learn name/address from it, and the member RPCs `join_club()` (mandatory 21+ & marketing confirmation, phone read from `auth.users`), `claim_guest_orders()`, `get_my_customer()`, `get_my_orders()`, `set_marketing_consent()`, `delete_my_account()`. Does **not** enable sign-ups | yes |
 | `migrations/0013_customer_admin.sql` | the OWNER's view of the club: `admin_customer_stats()`, `admin_list_customers()` (searchable/filterable/paginated, never lists deleted members) and `admin_export_audience('sms'\|'email'\|'suppression')` — owner-only (`is_admin()`, not staff), no direct table access; every export is recorded in the closed `customer_exports` log. Needs 0012 first | yes |
 | `migrations/0014_coupons.sql` | **Balagan Club coupons** — a member-only benefit redeemed in `create_order()`: `coupons` (owner-only; code typed by the owner, normalized and locked; independent `max_total_redemptions` / `max_per_member`; percent / fixed / free delivery; dates; first-order-only; archive, never delete), the `coupon_redemptions` ledger (reserved → redeemed → released, history kept, per-member identity = the verified phone), `coupon_events` audit, `coupon_attempts` throttle, `orders.coupon_*` snapshot, `preview_coupon()` for the checkout's apply button, `business_settings.club_offer_text` for the guest teaser. Redefines `create_order`, `release_expired_order`, `confirm_payment`, `transition_order`, `get_my_orders`, `get_business_settings` (each = its previous version + the coupon step). **Apply before deploying a client that sends `coupon_code` or an admin build that reads `coupon_code_snapshot`.** Needs 0013 first | yes |
+| `migrations/0015_pickup.sql` | **Store pickup (איסוף עצמי)** + per-method switches: `orders.fulfillment_method` ('delivery' default \| 'pickup' — no address, no delivery fee, no minimum), new status `ready_for_pickup` (pickup: confirmed → preparing → ready_for_pickup → completed; cancelling a ready order restores stock at once), `business_settings.pickup_enabled/delivery_enabled/cash_enabled/card_enabled/store_address_text` (defaults keep today's behaviour; **card defaults OFF** until a payment provider is wired), and `create_order()` now refuses an order while paused or outside the 'orders' schedule (`ORDERS_CLOSED`, Israel time) or for a switched-off method. Redefines `create_order`, `customer_apply_order` (a pickup order saves no address), `transition_order`, `get_order_status`/`get_my_orders` (+ `fulfillment_method`), `preview_coupon`, `get_business_settings`. **Apply before deploying a client or admin build from this version** (the admin reads `fulfillment_method`). Needs 0014 first | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project, including the club probe (`USER_*` always; `MEMBER_*` optional; `--signups-enabled` after sign-ups are on) — see `docs/CUSTOMER_PERMISSIONS_AUDIT.md` | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
@@ -305,6 +306,20 @@ on a real Postgres engine and checks roles, the transition map, stale/idempotent
 after-dispatch stock hold, cash→paid, the history trail and the staff visibility window. Then run
 `node scripts/security-test.mjs` against your project — set `STAFF_EMAIL`/`STAFF_PASSWORD` too (a user you inserted with
 role `staff`) so the staff section runs.
+
+## Store pickup — apply migration 0015 first
+
+Applying 0015 changes nothing customers see: delivery stays on, pickup off, cash on, card off. To switch to pickup:
+`/admin/settings` → "קבלת הזמנה ותשלום" → "איסוף עצמי מהחנות", type the store address, choose the payment methods, save.
+From then on the cart and checkout show no delivery fee/minimum/address, the board gets a "מוכנה לאיסוף" lane, and the
+customer follows the order at `/order/<id>` (linked from the success screen and from a strip on the homepage).
+
+**Orders are now refused outside the order hours** (`/admin/settings` → online-order hours) and while the pause switch is
+on — by the database, not just the banner. `scripts/security-test.mjs` opens ordering for the minute it runs (its probe
+orders must work at any hour) and puts the exact previous values back in its cleanup.
+
+**Verifying:** `node scripts/verify-order-management.mjs` covers 0015 (pickup without address/fee/minimum, the switches,
+ORDERS_CLOSED around today's hours in Israel time, the pickup lifecycle and its restock, a member's pickup order).
 
 ## Design notes worth knowing
 

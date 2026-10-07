@@ -199,6 +199,7 @@ function toOrder(value: unknown): MyOrder | null {
     discountCents: num(v.discount_cents),
     couponCode: str(v.coupon_code),
     totalCents: num(v.total_cents),
+    fulfillmentMethod: v.fulfillment_method === "pickup" ? "pickup" : "delivery",
     street: str(v.street) ?? "",
     houseNumber: str(v.house_number) ?? "",
     entrance: str(v.entrance) ?? "",

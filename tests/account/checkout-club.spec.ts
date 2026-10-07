@@ -130,7 +130,7 @@ test("join BEFORE paying: login in a drawer, the form switches to the member's, 
   expect(customer.phone).toBe(PHONE);
   expect(customer.first_name).toBe("דנה");
   expect(customer.age_confirmed).toBe(true);
-  expect(Object.keys(sent[0].body.p_payload).sort(), "no customer id is ever sent in the order").toEqual(["customer", "items", "payment_method"]);
+  expect(Object.keys(sent[0].body.p_payload).sort(), "no customer id is ever sent in the order").toEqual(["customer", "fulfillment_method", "items", "payment_method"]);
   // a member's details are not kept as device memory
   expect(await readLocalStorage(page, GUEST_KEY)).toBeNull();
 });

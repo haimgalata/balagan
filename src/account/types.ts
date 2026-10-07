@@ -102,6 +102,8 @@ export interface MyOrder {
   discountCents: number;
   couponCode: string | null;
   totalCents: number;
+  /** Missing on an order read from a database before migration 0015 = delivery. */
+  fulfillmentMethod?: "delivery" | "pickup";
   street: string;
   houseNumber: string;
   entrance: string;

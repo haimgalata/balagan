@@ -1,11 +1,15 @@
 /**
  * Pure order-management model: statuses, labels, which moves are offered to whom, search-filter building and
  * small formatters. No React, no Supabase — unit-tested directly. The DATABASE is what actually enforces the
- * transition rules (`transition_order()`, migration 0010); this only decides what the screen offers.
+ * transition rules (`transition_order()`, migrations 0010/0015); this only decides what the screen offers.
+ *
+ * Two lifecycles (migration 0015): delivery  confirmed -> preparing -> out_for_delivery -> completed
+ *                                   pickup    confirmed -> preparing -> ready_for_pickup -> completed
  */
 import type { AdminRole } from "@/admin/useAdminSession";
 
-export type OrderStatus = "pending" | "confirmed" | "preparing" | "out_for_delivery" | "completed" | "cancelled" | "expired";
+export type OrderStatus = "pending" | "confirmed" | "preparing" | "out_for_delivery" | "ready_for_pickup" | "completed" | "cancelled" | "expired";
+export type FulfillmentMethod = "delivery" | "pickup";
 export type PaymentStatus = "pending" | "paid" | "failed" | "cancelled";
 export type PaymentMethod = "cash" | "card";
 export type StockReturnStatus = "none" | "restored" | "pending_return" | "written_off";
@@ -38,15 +42,18 @@ export interface OrderRow {
   id: string;
   order_number: number;
   payment_method: PaymentMethod;
+  /** Missing only on rows read before migration 0015 = delivery. */
+  fulfillment_method?: FulfillmentMethod;
   order_status: OrderStatus;
   payment_status: PaymentStatus;
   first_name: string;
   last_name: string;
   phone: string;
   email: string | null;
-  city: string;
-  street: string;
-  house_number: string;
+  /** NULL for a pickup order. */
+  city: string | null;
+  street: string | null;
+  house_number: string | null;
   entrance: string | null;
   floor: string | null;
   apartment: string | null;
@@ -70,7 +77,7 @@ export interface OrderRow {
 }
 
 /** Statuses that are still "in the shop's hands" — the Active board's lanes. */
-export const ACTIVE_STATUSES = ["confirmed", "preparing", "out_for_delivery"] as const;
+export const ACTIVE_STATUSES = ["confirmed", "preparing", "out_for_delivery", "ready_for_pickup"] as const;
 export const FINISHED_STATUSES = ["completed", "cancelled", "expired"] as const;
 export type ActiveStatus = (typeof ACTIVE_STATUSES)[number];
 
@@ -81,6 +88,7 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   confirmed: "חדשה",
   preparing: "בהכנה",
   out_for_delivery: "בדרך ללקוח",
+  ready_for_pickup: "מוכנה לאיסוף",
   completed: "נמסרה",
   cancelled: "בוטלה",
   expired: "פג תוקף",
@@ -102,33 +110,48 @@ export const STOCK_RETURN_LABEL: Record<StockReturnStatus, string> = {
   written_off: "המוצרים לא הוחזרו (נמחקו מהמלאי)",
 };
 
+export const isPickup = (o: Pick<OrderRow, "fulfillment_method">): boolean => o.fulfillment_method === "pickup";
+
+/** The status in words for THIS order: a finished pickup order was collected ("נאספה"), not delivered. */
+export function statusLabel(status: OrderStatus, fulfillment: FulfillmentMethod = "delivery"): string {
+  if (status === "completed" && fulfillment === "pickup") return "נאספה";
+  return STATUS_LABEL[status];
+}
+
+/** The step before "completed" for each way of receiving an order. */
+const lastStep = (fulfillment: FulfillmentMethod): OrderStatus => (fulfillment === "pickup" ? "ready_for_pickup" : "out_for_delivery");
+
 /** What the "main" button does for an active order, or null when there's nothing to advance. */
 export interface AdvanceAction {
   to: OrderStatus;
   label: string;
 }
-export function advanceAction(status: OrderStatus): AdvanceAction | null {
+export function advanceAction(status: OrderStatus, fulfillment: FulfillmentMethod = "delivery"): AdvanceAction | null {
+  const pickup = fulfillment === "pickup";
   switch (status) {
     case "confirmed":
       return { to: "preparing", label: "התחל הכנה" };
     case "preparing":
-      return { to: "out_for_delivery", label: "יצאה למשלוח" };
+      return pickup ? { to: "ready_for_pickup", label: "מוכנה לאיסוף" } : { to: "out_for_delivery", label: "יצאה למשלוח" };
     case "out_for_delivery":
-      return { to: "completed", label: "נמסרה" };
+      return pickup ? null : { to: "completed", label: "נמסרה" };
+    case "ready_for_pickup":
+      return pickup ? { to: "completed", label: "נאספה" } : null;
     default:
       return null;
   }
 }
 
 /** One step back, when allowed (mis-tap recovery). Reopening a completed order is owner-only. */
-export function backAction(status: OrderStatus, role: AdminRole): AdvanceAction | null {
+export function backAction(status: OrderStatus, role: AdminRole, fulfillment: FulfillmentMethod = "delivery"): AdvanceAction | null {
   switch (status) {
     case "preparing":
       return { to: "confirmed", label: "חזרה ל״חדשה״" };
     case "out_for_delivery":
-      return { to: "preparing", label: "חזרה להכנה" };
+    case "ready_for_pickup":
+      return status === lastStep(fulfillment) ? { to: "preparing", label: "חזרה להכנה" } : null;
     case "completed":
-      return role === "owner" ? { to: "out_for_delivery", label: "פתיחה מחדש" } : null;
+      return role === "owner" ? { to: lastStep(fulfillment), label: "פתיחה מחדש" } : null;
     default:
       return null;
   }
@@ -136,10 +159,14 @@ export function backAction(status: OrderStatus, role: AdminRole): AdvanceAction 
 
 export const canCancel = (status: OrderStatus): boolean => isActive(status);
 
-/** True when cancelling now keeps the stock out of inventory until the goods are confirmed back. */
+/** True when cancelling now keeps the stock out of inventory until the goods are confirmed back (a pickup order never
+ * left the store, so cancelling it while "ready" restores stock at once). */
 export const cancelHoldsStock = (status: OrderStatus): boolean => status === "out_for_delivery";
 
 export const CANCEL_REASONS = ["הלקוח ביטל", "מוצר חסר במלאי", "הלקוח לא ענה / לא נמצא", "כתובת לא תקינה / מחוץ לאזור", "אחר"] as const;
+export const PICKUP_CANCEL_REASONS = ["הלקוח ביטל", "מוצר חסר במלאי", "הלקוח לא הגיע לאסוף", "אחר"] as const;
+export const cancelReasons = (fulfillment: FulfillmentMethod = "delivery"): readonly string[] =>
+  fulfillment === "pickup" ? PICKUP_CANCEL_REASONS : CANCEL_REASONS;
 export const OTHER_REASON = "אחר";
 
 // ---- search ---------------------------------------------------------------------------------------------------
@@ -219,8 +246,9 @@ export const FORGOTTEN_ORDER_MS = 12 * 60 * 60_000;
 
 export const fullName = (o: Pick<OrderRow, "first_name" | "last_name">): string => `${o.first_name} ${o.last_name}`.trim();
 
-export function addressLine(o: Pick<OrderRow, "street" | "house_number" | "city">): string {
-  return `${o.street} ${o.house_number}, ${o.city}`;
+export function addressLine(o: Pick<OrderRow, "street" | "house_number" | "city" | "fulfillment_method">): string {
+  if (o.fulfillment_method === "pickup") return "איסוף עצמי מהחנות";
+  return `${o.street ?? ""} ${o.house_number ?? ""}, ${o.city ?? ""}`;
 }
 
 /** Entrance / floor / apartment / intercom, only the ones present. */

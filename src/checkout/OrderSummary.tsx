@@ -5,6 +5,7 @@ import { CartLineRow } from "@/storefront/components/CartLineRow";
 import { formatPrice } from "@/storefront/lib/pricing";
 import { OrderTotals } from "@/storefront/components/OrderTotals";
 import type { AppliedCoupon } from "@/checkout/couponTypes";
+import { getOrderingRules } from "@/storefront/lib/fulfillment";
 
 interface OrderSummaryProps {
   /** Line keys whose price changed since checkout was entered — see `useCheckoutValidation`. */
@@ -23,7 +24,9 @@ interface OrderSummaryProps {
 export function OrderSummary({ changedPriceKeys, couponSlot, coupon }: OrderSummaryProps) {
   const { lines, totalPriceCents, increment, decrement, removeLine } = useCart();
   const { settings } = useBusinessSettings();
-  const freeDelivery = coupon?.discountType === "free_delivery";
+  const rules = getOrderingRules(settings);
+  const pickup = rules.fulfillment === "pickup";
+  const freeDelivery = !pickup && coupon?.discountType === "free_delivery";
   const savingsCents = lines.reduce((sum, line) => (line.available ? sum + line.savingsCents : sum), 0);
 
   return (
@@ -43,10 +46,11 @@ export function OrderSummary({ changedPriceKeys, couponSlot, coupon }: OrderSumm
 
       <div className="border-t border-brand-border px-4 py-4">
         {couponSlot}
-        <p className="mb-3 text-center text-xs text-brand-text-muted">מינימום הזמנה ₪{formatPrice(settings.min_order_cents)}</p>
+        {!pickup && <p className="mb-3 text-center text-xs text-brand-text-muted">מינימום הזמנה ₪{formatPrice(rules.minOrderCents)}</p>}
         <OrderTotals
           subtotalCents={totalPriceCents}
-          deliveryFeeCents={settings.delivery_fee_cents}
+          deliveryFeeCents={rules.deliveryFeeCents}
+          pickup={pickup}
           savingsCents={savingsCents}
           coupon={coupon ? { code: coupon.code, discountCents: coupon.discountCents, freeDelivery } : null}
         />

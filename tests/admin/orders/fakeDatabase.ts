@@ -33,6 +33,8 @@ export interface FakeOrder {
   id: string;
   order_number: number;
   payment_method: "cash" | "card";
+  /** migration 0015; absent = delivery */
+  fulfillment_method?: "delivery" | "pickup";
   order_status: string;
   payment_status: string;
   first_name: string;
@@ -40,9 +42,9 @@ export interface FakeOrder {
   phone: string;
   phone_digits: string;
   email: string | null;
-  city: string;
-  street: string;
-  house_number: string;
+  city: string | null;
+  street: string | null;
+  house_number: string | null;
   entrance: string | null;
   floor: string | null;
   apartment: string | null;
@@ -120,7 +122,7 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
   const restocked: string[] = [];
   let failAll: { status: number; body?: unknown } | null = null;
 
-  const ACTIVE = ["confirmed", "preparing", "out_for_delivery"];
+  const ACTIVE = ["confirmed", "preparing", "out_for_delivery", "ready_for_pickup"];
   const staffCanSee = (o: FakeOrder) =>
     ACTIVE.includes(o.order_status) || o.stock_return_status === "pending_return" || new Date(o.status_changed_at).getTime() >= FIXED_NOW_MS - 7 * 86_400_000;
 
@@ -190,11 +192,12 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
     if (o.order_status === to) return { status: 200, body: { order_id: o.id, order_status: to, changed: false } };
     if (o.order_status !== expected) return pgError("P0001", `STALE_STATUS: ${o.order_status}`, 400);
     const from = o.order_status;
+    const last = o.fulfillment_method === "pickup" ? "ready_for_pickup" : "out_for_delivery"; // same rule as migration 0015
     const ok =
       (from === "confirmed" && ["preparing", "cancelled"].includes(to)) ||
-      (from === "preparing" && ["out_for_delivery", "confirmed", "cancelled"].includes(to)) ||
-      (from === "out_for_delivery" && ["completed", "preparing", "cancelled"].includes(to)) ||
-      (from === "completed" && to === "out_for_delivery" && actor.role === "owner");
+      (from === "preparing" && [last, "confirmed", "cancelled"].includes(to)) ||
+      (from === last && ["completed", "preparing", "cancelled"].includes(to)) ||
+      (from === "completed" && to === last && actor.role === "owner");
     if (!ok) return pgError("P0001", `INVALID_TRANSITION: ${from} -> ${to}`, 400);
     const trimmed = (reason ?? "").trim();
     if (to === "cancelled") {

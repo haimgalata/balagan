@@ -8,13 +8,16 @@ interface OrderTotalsProps {
   savingsCents?: number;
   /** A club coupon applied in checkout. Display only — the database prices the real order. */
   coupon?: { code: string; discountCents: number; freeDelivery: boolean } | null;
+  /** Pickup from the store: there is no delivery, so no delivery line (the fee passed in is 0). */
+  pickup?: boolean;
 }
 
 /**
  * The money summary under the cart lines, shared by the cart drawer and checkout so both show the same story:
  * items -> (coupon) -> delivery -> the amount that is actually due (items + delivery - coupon, like the order's total).
+ * For a pickup order the delivery line is left out altogether.
  */
-export function OrderTotals({ subtotalCents, deliveryFeeCents, savingsCents = 0, coupon = null }: OrderTotalsProps) {
+export function OrderTotals({ subtotalCents, deliveryFeeCents, savingsCents = 0, coupon = null, pickup = false }: OrderTotalsProps) {
   const freeDelivery = coupon?.freeDelivery === true;
   const total = getPayableTotalCents({ subtotalCents, deliveryFeeCents, couponDiscountCents: coupon?.discountCents, freeDelivery });
 
@@ -33,6 +36,7 @@ export function OrderTotals({ subtotalCents, deliveryFeeCents, savingsCents = 0,
           <span className="text-brand-success">-₪{formatPrice(coupon.discountCents)}</span>
         </div>
       )}
+      {!pickup && (
       <div className="flex items-center justify-between text-brand-text-muted" data-testid="delivery-line">
         <span>משלוח</span>
         {freeDelivery ? (
@@ -43,6 +47,7 @@ export function OrderTotals({ subtotalCents, deliveryFeeCents, savingsCents = 0,
           <span className="text-brand-text">₪{formatPrice(deliveryFeeCents)}</span>
         )}
       </div>
+      )}
       <div className="mt-1 flex items-center justify-between border-t border-brand-border pt-2 text-lg">
         <span className="font-medium text-brand-text">סה&quot;כ לתשלום</span>
         <span className="font-bold text-brand-gold">₪{formatPrice(total)}</span>

@@ -21,6 +21,12 @@ export interface BusinessSettingsRow {
   min_order_cents: number;
   delivery_fee_cents: number;
   orders_paused: boolean;
+  // Migration 0015 — undefined until it has been applied (the screen then asks for it).
+  pickup_enabled?: boolean;
+  delivery_enabled?: boolean;
+  cash_enabled?: boolean;
+  card_enabled?: boolean;
+  store_address_text?: string | null;
 }
 
 export interface BusinessSettingsData {
@@ -43,7 +49,7 @@ export async function loadBusinessSettingsData(client: SupabaseClient): Promise<
   try {
     const [hours, settings] = await Promise.all([
       client.from("business_hours").select(`schedule_type,${HOUR_COLUMNS}`).order("day_of_week"),
-      client.from("business_settings").select("min_order_cents,delivery_fee_cents,orders_paused").eq("id", 1).single(),
+      client.from("business_settings").select("*").eq("id", 1).single(),
     ]);
     const error = hours.error ?? settings.error;
     if (error) return fail(error);

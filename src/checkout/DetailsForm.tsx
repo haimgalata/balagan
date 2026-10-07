@@ -1,11 +1,12 @@
 import { useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
-import { Loader2, Lock } from "lucide-react";
+import { Loader2, Lock, Store } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { StreetField } from "@/checkout/StreetField";
 import { NETIVOT_CITY_NAME, NETIVOT_STREETS } from "@/checkout/data/netivotStreets";
 import type { PaymentMethod } from "@/checkout/lib/ordersApi";
 import { isValidIsraeliPhone } from "@/storefront/lib/phone";
 import type { SavedAddress } from "@/account/types";
+import type { FulfillmentMethod } from "@/storefront/lib/fulfillment";
 
 export interface CustomerDetails {
   firstName: string;
@@ -13,7 +14,8 @@ export interface CustomerDetails {
   phone: string;
   /** Optional — for future order confirmations/receipts only. */
   email: string;
-  /** Always `NETIVOT_CITY_NAME`: delivery is Netivot-only and this isn't user-editable. */
+  fulfillmentMethod: FulfillmentMethod;
+  /** Always `NETIVOT_CITY_NAME` for delivery (Netivot-only, not user-editable); empty for pickup, like the other address fields. */
   city: string;
   street: string;
   houseNumber: string;
@@ -24,7 +26,7 @@ export interface CustomerDetails {
   notes: string;
   ageConfirmed: boolean;
   termsAccepted: boolean;
-  /** Always "cash" today — card is shown but disabled until a payment provider is chosen. */
+  /** One of the methods the owner has switched on (see fulfillment.ts). */
   paymentMethod: PaymentMethod;
 }
 
@@ -44,6 +46,14 @@ export interface DetailsPrefill {
 }
 
 interface DetailsFormProps {
+  /** Pickup from the store (no address) or delivery. */
+  fulfillment: FulfillmentMethod;
+  /** Pickup: where the store is (owner-typed; may be missing) and today's store hours. */
+  storeAddress?: string | null;
+  storeHoursLabel?: string;
+  cashEnabled: boolean;
+  /** Card is offered only once a payment provider is wired AND the owner switched it on. */
+  cardEnabled: boolean;
   /** True while a blocking validation issue (or a below-minimum total) means submitting can't proceed yet. */
   disabled: boolean;
   /** True while the pre-submit revalidation triggered by this form is in flight. */
@@ -64,7 +74,7 @@ interface DetailsFormProps {
 }
 
 type FieldErrors = Partial<
-  Record<"firstName" | "lastName" | "phone" | "email" | "street" | "houseNumber" | "ageConfirmed" | "termsAccepted", string>
+  Record<"firstName" | "lastName" | "phone" | "email" | "street" | "houseNumber" | "ageConfirmed" | "termsAccepted" | "paymentMethod", string>
 >;
 
 const inputClasses =
@@ -157,15 +167,19 @@ function ConfirmCheckbox({
 }
 
 /**
- * Customer + delivery-address details. Client-side validation only — submitting does not persist an order
- * yet (there is no order-processing backend); the parent shows a "coming soon" state once this and one
- * final revalidation pass both succeed.
+ * Customer + delivery-address details (or, for pickup, just the customer — the store's address is shown instead).
+ * Client-side validation only — create_order() re-validates everything and decides.
  *
  * Delivery is Netivot-only today: the city is fixed (not an editable field) and the street is restricted
  * to `NETIVOT_STREETS` (see `data/netivotStreets.ts`) via `StreetField`'s autocomplete — free text that
  * doesn't match an entry in that list is rejected on submit, same as any other required field.
  */
 export function DetailsForm({
+  fulfillment,
+  storeAddress = null,
+  storeHoursLabel,
+  cashEnabled,
+  cardEnabled,
   disabled,
   busy,
   onSubmit,
@@ -197,8 +211,10 @@ export function DetailsForm({
   const [addressId, setAddressId] = useState<string | null>(first?.id ?? null);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
-  // Card isn't wired to a payment provider yet (see CLAUDE.md) — cash is the only real choice today.
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const pickup = fulfillment === "pickup";
+  // Only methods the owner switched on can be chosen; null = none is available right now (submitting is blocked).
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(cashEnabled ? "cash" : cardEnabled ? "card" : null);
+  const noPaymentMethod = !cashEnabled && !cardEnabled;
   const [errors, setErrors] = useState<FieldErrors>({});
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -210,8 +226,11 @@ export function DetailsForm({
     if (lastName.trim() === "") nextErrors.lastName = "נא להזין שם משפחה";
     if (!isValidIsraeliPhone(phone)) nextErrors.phone = "נא להזין מספר טלפון תקין";
     if (email.trim() !== "" && !isValidEmail(email)) nextErrors.email = "נא להזין כתובת אימייל תקינה";
-    if (!NETIVOT_STREETS.includes(street.trim())) nextErrors.street = "נא לבחור רחוב מהרשימה המוצעת";
-    if (houseNumber.trim() === "") nextErrors.houseNumber = "נא להזין מספר בית";
+    if (!pickup) {
+      if (!NETIVOT_STREETS.includes(street.trim())) nextErrors.street = "נא לבחור רחוב מהרשימה המוצעת";
+      if (houseNumber.trim() === "") nextErrors.houseNumber = "נא להזין מספר בית";
+    }
+    if (paymentMethod === null) nextErrors.paymentMethod = "נא לבחור אופן תשלום";
     if (!ageConfirmed) nextErrors.ageConfirmed = "יש לאשר את הצהרת הגיל כדי להמשיך";
     if (!termsAlreadyAccepted && !termsAccepted) nextErrors.termsAccepted = "יש לאשר את התקנון כדי להמשיך";
     setErrors(nextErrors);
@@ -221,18 +240,20 @@ export function DetailsForm({
       return;
     }
 
+    if (paymentMethod === null) return;
     onSubmit({
+      fulfillmentMethod: fulfillment,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       phone: phone.trim(),
       email: email.trim(),
-      city: NETIVOT_CITY_NAME,
-      street: street.trim(),
-      houseNumber: houseNumber.trim(),
-      entrance: entrance.trim(),
-      floor: floor.trim(),
-      apartment: apartment.trim(),
-      intercomCode: intercomCode.trim(),
+      city: pickup ? "" : NETIVOT_CITY_NAME,
+      street: pickup ? "" : street.trim(),
+      houseNumber: pickup ? "" : houseNumber.trim(),
+      entrance: pickup ? "" : entrance.trim(),
+      floor: pickup ? "" : floor.trim(),
+      apartment: pickup ? "" : apartment.trim(),
+      intercomCode: pickup ? "" : intercomCode.trim(),
       notes: notes.trim(),
       ageConfirmed,
       termsAccepted: termsAlreadyAccepted || termsAccepted,
@@ -302,6 +323,17 @@ export function DetailsForm({
         </div>
       </fieldset>
 
+      {pickup ? (
+        <section aria-label="איסוף עצמי" className="flex items-start gap-3 rounded-lg border border-brand-gold/60 bg-brand-gold/5 px-3 py-3">
+          <Store size={20} className="mt-0.5 shrink-0 text-brand-gold" aria-hidden="true" />
+          <div className="flex flex-col gap-0.5 text-sm text-brand-text">
+            <span className="font-semibold">איסוף עצמי מהחנות</span>
+            {storeAddress && <span>{storeAddress}</span>}
+            {storeHoursLabel && <span className="text-xs text-brand-text-muted">שעות החנות היום: {storeHoursLabel}</span>}
+            <span className="text-xs text-brand-text-muted">נעדכן בעמוד ההזמנה כשהיא מוכנה לאיסוף.</span>
+          </div>
+        </section>
+      ) : (
       <fieldset className="flex flex-col gap-4">
         <legend className="mb-1 text-sm font-semibold text-brand-text">כתובת למשלוח</legend>
 
@@ -385,10 +417,11 @@ export function DetailsForm({
           </>
         )}
       </fieldset>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="checkout-notes" className="text-sm font-medium text-brand-text">
-          הערות למשלוח (אופציונלי)
+          {pickup ? "הערות להזמנה (אופציונלי)" : "הערות למשלוח (אופציונלי)"}
         </label>
         <textarea id="checkout-notes" value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} className={inputClasses} />
       </div>
@@ -396,43 +429,79 @@ export function DetailsForm({
       <fieldset className="flex flex-col gap-3">
         <legend className="mb-1 text-sm font-semibold text-brand-text">אופן תשלום</legend>
         <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => setPaymentMethod("cash")}
-            aria-pressed={paymentMethod === "cash"}
-            className={`rounded-lg border p-3 text-sm font-medium transition-colors ${
-              paymentMethod === "cash"
-                ? "border-brand-gold bg-brand-gold/10 text-brand-gold"
-                : "border-brand-border text-brand-text hover:border-brand-border-strong"
-            }`}
-          >
-            מזומן במסירה
-          </button>
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            className="cursor-not-allowed rounded-lg border border-brand-border p-3 text-sm font-medium text-brand-text-muted opacity-60"
-          >
-            כרטיס אשראי
-            <span className="block text-xs">בקרוב</span>
-          </button>
+          {cashEnabled && (
+            <button
+              type="button"
+              onClick={() => setPaymentMethod("cash")}
+              aria-pressed={paymentMethod === "cash"}
+              className={`rounded-lg border p-3 text-sm font-medium transition-colors ${
+                paymentMethod === "cash"
+                  ? "border-brand-gold bg-brand-gold/10 text-brand-gold"
+                  : "border-brand-border text-brand-text hover:border-brand-border-strong"
+              }`}
+            >
+              {pickup ? "מזומן באיסוף" : "מזומן במסירה"}
+            </button>
+          )}
+          {cardEnabled ? (
+            <button
+              type="button"
+              onClick={() => setPaymentMethod("card")}
+              aria-pressed={paymentMethod === "card"}
+              className={`rounded-lg border p-3 text-sm font-medium transition-colors ${
+                paymentMethod === "card"
+                  ? "border-brand-gold bg-brand-gold/10 text-brand-gold"
+                  : "border-brand-border text-brand-text hover:border-brand-border-strong"
+              }`}
+            >
+              כרטיס אשראי
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              className="cursor-not-allowed rounded-lg border border-brand-border p-3 text-sm font-medium text-brand-text-muted opacity-60"
+            >
+              כרטיס אשראי
+              <span className="block text-xs">בקרוב</span>
+            </button>
+          )}
         </div>
+        {noPaymentMethod && (
+          <p role="status" className="text-sm text-brand-danger">
+            התשלום באתר עדיין לא זמין, ולכן אי אפשר להשלים הזמנה כרגע.
+          </p>
+        )}
+        {errors.paymentMethod && !noPaymentMethod && (
+          <p role="alert" className="text-xs text-brand-danger">
+            {errors.paymentMethod}
+          </p>
+        )}
       </fieldset>
 
       <fieldset className="flex flex-col gap-3">
         <legend className="mb-1 text-sm font-semibold text-brand-text">אישורים נדרשים</legend>
 
         <ConfirmCheckbox id="checkout-age-confirm" checked={ageConfirmed} onChange={setAgeConfirmed} error={errors.ageConfirmed}>
-          אני מאשר/ת כי מקבל/ת המשלוח הינו/ה בן/בת 18 ומעלה, וכי מסירת מוצרים המוגבלים לפי גיל תתבצע אך ורק בהצגת
-          תעודה מזהה המעידה על גיל 18 ומעלה במעמד המסירה — אם לא תוצג תעודה מתאימה, המשלוח לא יימסר.
+          {pickup ? (
+            <>
+              אני מאשר/ת כי מי שיאסוף/תאסוף את ההזמנה הינו/ה בן/בת 18 ומעלה, וכי מוצרים המוגבלים לפי גיל יימסרו בחנות אך
+              ורק בהצגת תעודה מזהה המעידה על גיל 18 ומעלה — אם לא תוצג תעודה מתאימה, ההזמנה לא תימסר.
+            </>
+          ) : (
+            <>
+              אני מאשר/ת כי מקבל/ת המשלוח הינו/ה בן/בת 18 ומעלה, וכי מסירת מוצרים המוגבלים לפי גיל תתבצע אך ורק בהצגת
+              תעודה מזהה המעידה על גיל 18 ומעלה במעמד המסירה — אם לא תוצג תעודה מתאימה, המשלוח לא יימסר.
+            </>
+          )}
         </ConfirmCheckbox>
 
         {/* The terms/ordering-and-delivery page doesn't exist yet (see CLAUDE.md) — once it does, wrap the
             phrase below in a real <a href="..."> to it instead of this styled span. */}
         {!termsAlreadyAccepted && (
           <ConfirmCheckbox id="checkout-terms-accept" checked={termsAccepted} onChange={setTermsAccepted} error={errors.termsAccepted}>
-            קראתי ואני מסכימ/ה ל<span className="text-brand-gold underline underline-offset-2">תקנון האתר ותנאי ההזמנה והמשלוח</span>.
+            קראתי ואני מסכימ/ה ל<span className="text-brand-gold underline underline-offset-2">{pickup ? "תקנון האתר ותנאי ההזמנה" : "תקנון האתר ותנאי ההזמנה והמשלוח"}</span>.
           </ConfirmCheckbox>
         )}
       </fieldset>
@@ -451,7 +520,7 @@ export function DetailsForm({
         </p>
       )}
 
-      <Button type="submit" size="lg" disabled={disabled || busy} className="w-full">
+      <Button type="submit" size="lg" disabled={disabled || busy || noPaymentMethod} className="w-full">
         {busy ? (
           <>
             <Loader2 size={18} className="animate-spin" aria-hidden="true" />

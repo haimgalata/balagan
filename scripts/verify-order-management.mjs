@@ -58,6 +58,8 @@ await db.exec(file("0013_customer_admin.sql"));
 await db.exec(file("0013_customer_admin.sql")); // re-runnable
 await db.exec(file("0014_coupons.sql"));
 await db.exec(file("0014_coupons.sql")); // re-runnable
+await db.exec(file("0015_pickup.sql"));
+await db.exec(file("0015_pickup.sql")); // re-runnable
 await db.exec(file("0002_rls.sql"));               // re-running 0002 must not widen is_admin()
 await db.exec(`insert into public.admin_users (user_id, role) values ('${STAFF}', 'staff');`);
 
@@ -86,6 +88,11 @@ await su(`insert into public.products (id, category_id, name_he, unit_price, tra
           values ('901','00000000-0000-0000-0000-0000000000c1','מוצר',100,true,10,true,'מארז',5,450),
                  ('902','00000000-0000-0000-0000-0000000000c1','ללא מעקב',60,false,0,false,null,null,null)`);
 await su(`update public.business_settings set min_order_cents = 0, delivery_fee_cents = 1500 where id = 1`);
+// 0015: orders are refused outside the 'orders' schedule and card is off by default. The checks below run at any
+// time of day and use card orders, so open the schedule around the clock and switch card on (the 0015 section
+// re-tests both rules explicitly).
+await su(`update public.business_hours set is_open = true, open_time = '00:00', close_time = '23:59:59.999' where schedule_type = 'orders'`);
+await su(`update public.business_settings set card_enabled = true where id = 1`);
 
 const customer = { first_name: "א", last_name: "ב", phone: "050-123-4567", city: "נתיבות", street: "הרצל", house_number: "1", age_confirmed: true, terms_accepted: true };
 async function newOrder(items = [{ product_id: "901", option: "unit", quantity: 2 }], method = "cash") {
@@ -797,6 +804,126 @@ check("only the owner sets it; it is plain text up to 120 chars, never empty",
   && !(await asOwner(`update public.business_settings set club_offer_text='   ' where id=1`)).ok
   && !(await asOwner(`update public.business_settings set club_offer_text='${"א".repeat(121)}' where id=1`)).ok
   && (await asOwner(`update public.business_settings set club_offer_text=null where id=1 returning 1`)).rows.length === 1);
+
+// ---- pickup, method switches, orders-open check (migration 0015) -------------------------------------------------
+console.log("\nPickup (0015)");
+const pickupCust = { first_name: "פ", last_name: "ק", phone: "050-777-8888", age_confirmed: true, terms_accepted: true, notes: "אגיע ב-18:00" };
+const pick = (who = asAnon, opts = {}) => placeC(who, null, { cust: pickupCust, extra: { fulfillment_method: "pickup" }, ...opts });
+check("pickup is OFF by default: FULFILLMENT_UNAVAILABLE", refused(await pick(), "FULFILLMENT_UNAVAILABLE"));
+check("the switches are owner-only", ((await asStaff(`update public.business_settings set pickup_enabled=true where id=1 returning 1`)).rows ?? []).length === 0);
+check("at least one fulfillment method must stay on", !(await asOwner(`update public.business_settings set delivery_enabled=false, pickup_enabled=false where id=1`)).ok);
+await asOwner(`update public.business_settings set pickup_enabled=true, delivery_enabled=false, min_order_cents=50000, store_address_text='הרצל 1, נתיבות' where id=1`);
+const pub15 = (await asAnon(`select public.get_business_settings() as s`)).rows[0].s;
+check("public settings expose the switches and the store address",
+  pub15.pickup_enabled === true && pub15.delivery_enabled === false && pub15.cash_enabled === true && pub15.card_enabled === true && pub15.store_address_text === "הרצל 1, נתיבות");
+const p1r = await pick();
+const p1 = p1r.ok ? p1r.rows[0].o : null;
+const p1row = p1 ? await order(p1.order_id) : null;
+check("a pickup order needs no address, pays no delivery fee and ignores the minimum order",
+  p1 && p1.fulfillment_method === "pickup" && p1row.city === null && p1row.street === null && p1row.delivery_fee_cents === 0 && p1row.total_cents === 12000 && p1row.delivery_notes === "אגיע ב-18:00", p1r.error);
+check("address fields sent with a pickup order are not stored",
+  await (async () => { const r = await pick(asAnon, { cust: { ...pickupCust, city: "נתיבות", street: "הרצל", house_number: "9" } }); return r.ok && (await order(r.rows[0].o.order_id)).street === null; })());
+check("delivery is now off: a delivery order is refused", refused(await placeC(asAnon, null), "FULFILLMENT_UNAVAILABLE"));
+check("an unknown fulfillment method is refused", refused(await placeC(asAnon, null, { extra: { fulfillment_method: "drone" } }), "INVALID_FULFILLMENT_METHOD"));
+check("the table refuses a delivery order without an address and a pickup order with a fee",
+  !(await su(`update public.orders set fulfillment_method='delivery' where id='${p1.order_id}'`).then(() => true, () => false))
+  && !(await su(`update public.orders set delivery_fee_cents=1500, total_cents=13500 where id='${p1.order_id}'`).then(() => true, () => false)));
+
+const st15 = (await asAnon(`select public.get_order_status($1::uuid) as s`, [p1.order_id])).rows[0].s;
+check("get_order_status carries fulfillment_method, still no personal data",
+  st15.fulfillment_method === "pickup" && st15.order_status === "confirmed" && !("phone" in st15) && !("first_name" in st15));
+
+console.log("\nPickup lifecycle (0015)");
+let r15 = await tr(asStaff, p1.order_id, "confirmed", "preparing");
+check("pickup: confirmed -> preparing", r15.ok, r15.error);
+r15 = await tr(asStaff, p1.order_id, "preparing", "out_for_delivery");
+check("a pickup order cannot go out for delivery", !r15.ok && /INVALID_TRANSITION/.test(r15.error), r15.error);
+r15 = await tr(asStaff, p1.order_id, "preparing", "ready_for_pickup");
+check("pickup: preparing -> ready_for_pickup", r15.ok && r15.rows[0].r.order_status === "ready_for_pickup", r15.error);
+check("staff still sees a ready_for_pickup order; the customer's status page says so",
+  (await asStaff(`select 1 from public.orders where id='${p1.order_id}'`)).rows.length === 1
+  && (await asAnon(`select public.get_order_status($1::uuid) as s`, [p1.order_id])).rows[0].s.order_status === "ready_for_pickup");
+r15 = await tr(asStaff, p1.order_id, "ready_for_pickup", "preparing");
+check("staff can step back ready_for_pickup -> preparing", r15.ok, r15.error);
+await tr(asStaff, p1.order_id, "preparing", "ready_for_pickup");
+r15 = await tr(asStaff, p1.order_id, "ready_for_pickup", "completed");
+check("ready_for_pickup -> completed; cash marked paid", r15.ok && r15.rows[0].r.payment_status === "paid", r15.error);
+check("staff cannot reopen it", !(await tr(asStaff, p1.order_id, "completed", "ready_for_pickup")).ok);
+r15 = await tr(asOwner, p1.order_id, "completed", "out_for_delivery");
+check("owner reopen goes back to ready_for_pickup, never out_for_delivery", !r15.ok && /INVALID_TRANSITION/.test(r15.error), r15.error);
+r15 = await tr(asOwner, p1.order_id, "completed", "ready_for_pickup");
+check("owner can reopen to ready_for_pickup", r15.ok, r15.error);
+
+await su(`update public.products set stock_base_units = 10, stock_reserved_units = 0 where id = '901'`);
+const s0 = await stock();
+const p2 = (await pick(asAnon, { items: [{ product_id: "901", option: "unit", quantity: 2 }] })).rows[0].o;
+await tr(asStaff, p2.order_id, "confirmed", "preparing");
+await tr(asStaff, p2.order_id, "preparing", "ready_for_pickup");
+check("pickup order deducted stock", (await stock()) === s0 - 2);
+r15 = await tr(asStaff, p2.order_id, "ready_for_pickup", "cancelled", "הלקוח לא הגיע");
+check("cancelling a ready_for_pickup order restores stock at once (goods never left the store)",
+  r15.ok && r15.rows[0].r.stock_return_status === "restored" && (await stock()) === s0, r15.error);
+
+await asOwner(`update public.business_settings set delivery_enabled=true, min_order_cents=0 where id=1`);
+const d15 = (await placeC(asAnon, null)).rows[0].o;
+await tr(asStaff, d15.order_id, "confirmed", "preparing");
+check("a delivery order cannot become ready_for_pickup", !(await tr(asStaff, d15.order_id, "preparing", "ready_for_pickup")).ok);
+check("old clients (no fulfillment_method) still create delivery orders", (await order(d15.order_id)).fulfillment_method === "delivery");
+
+console.log("\nPayment-method switches (0015)");
+await asOwner(`update public.business_settings set cash_enabled=false where id=1`);
+check("cash off: PAYMENT_METHOD_UNAVAILABLE", refused(await pick(), "PAYMENT_METHOD_UNAVAILABLE"));
+const pc = await pick(asAnon, { method: "card" });
+check("card on: a pickup card order is pending with a payment attempt and no fee",
+  pc.ok && pc.rows[0].o.order_status === "pending" && !!pc.rows[0].o.payment_attempt_id && (await order(pc.rows[0].o.order_id)).delivery_fee_cents === 0, pc.error);
+await asOwner(`update public.business_settings set card_enabled=false where id=1`);
+check("card off: PAYMENT_METHOD_UNAVAILABLE", refused(await pick(asAnon, { method: "card" }), "PAYMENT_METHOD_UNAVAILABLE"));
+const pcKey = randomUUID();
+await asOwner(`update public.business_settings set card_enabled=true where id=1`);
+const pcFirst = await pick(asAnon, { method: "card", key: pcKey });
+await asOwner(`update public.business_settings set card_enabled=false, cash_enabled=true where id=1`);
+check("a retry of an existing order still returns it after the switch went off (idempotency first)",
+  (await pick(asAnon, { method: "card", key: pcKey })).rows?.[0]?.o?.order_id === pcFirst.rows[0].o.order_id);
+await asOwner(`update public.business_settings set card_enabled=true where id=1`);
+
+console.log("\nOrders open / closed (0015)");
+const orderCount = async () => (await su(`select count(*)::int n from public.orders`))[0].n;
+await asOwner(`update public.business_settings set orders_paused=true where id=1`);
+const nBefore = await orderCount();
+check("orders_paused: ORDERS_CLOSED, nothing created", refused(await pick(), "ORDERS_CLOSED") && (await orderCount()) === nBefore);
+await asOwner(`update public.business_settings set orders_paused=false where id=1`);
+const today = (await su(`select extract(dow from now() at time zone 'Asia/Jerusalem')::int d`))[0].d;
+await su(`update public.business_hours set is_open=false, open_time=null, close_time=null where schedule_type='orders' and day_of_week=$1`, [today]);
+check("closed today by the schedule: ORDERS_CLOSED", refused(await pick(), "ORDERS_CLOSED"));
+const nowMin = (await su(`select (extract(hour from now() at time zone 'Asia/Jerusalem') * 60 + extract(minute from now() at time zone 'Asia/Jerusalem'))::int m`))[0].m;
+if (nowMin >= 2 && nowMin <= 1435) {
+  const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  await su(`update public.business_hours set is_open=true, open_time=$2::time, close_time=$3::time where schedule_type='orders' and day_of_week=$1`, [today, hhmm(nowMin + 2), hhmm(nowMin + 3)]);
+  check("before today's opening time (Israel time): ORDERS_CLOSED", refused(await pick(), "ORDERS_CLOSED"));
+  await su(`update public.business_hours set open_time=$2::time, close_time=$3::time where schedule_type='orders' and day_of_week=$1`, [today, hhmm(nowMin - 2), hhmm(nowMin + 3)]);
+  check("inside today's hours (Israel time): accepted", (await pick()).ok);
+  await su(`update public.business_hours set open_time=$2::time, close_time=$3::time where schedule_type='orders' and day_of_week=$1`, [today, "00:00", hhmm(nowMin - 1)]);
+  check("after today's closing time: ORDERS_CLOSED", refused(await pick(), "ORDERS_CLOSED"));
+} else {
+  console.log("  (skipped the opening/closing-time checks: too close to midnight in Israel)");
+}
+await su(`update public.business_hours set is_open=true, open_time='00:00', close_time='23:59:59.999' where schedule_type='orders'`);
+check("orders_accepting_now() is not callable by customers", !(await asAnon(`select public.orders_accepting_now()`)).ok && !(await asPlain(`select public.orders_accepting_now()`)).ok);
+
+console.log("\nPickup for a club member (0015)");
+const memberId = (await cA.who(`select auth.uid() as u`)).rows[0].u;
+const addrCount = async () => (await su(`select count(*)::int n from public.customer_addresses where customer_id=$1`, [memberId]))[0].n;
+const addrBefore = await addrCount();
+const mp = await pick(cA.who);
+check("a member's pickup order succeeds, is attached to the member, and saves no address",
+  mp.ok && (await order(mp.rows[0].o.order_id)).customer_id === memberId && (await addrCount()) === addrBefore, mp.error);
+const mine15 = (await cA.who(`select public.get_my_orders(50) as o`)).rows[0].o.find((x) => x.id === mp.rows[0]?.o?.order_id);
+check("get_my_orders shows fulfillment_method", mine15?.fulfillment_method === "pickup" && mine15.street === null);
+const fd = await mkCoupon({ discount_type: "free_delivery", discount_value: null });
+check("free-delivery coupon on a pickup order: COUPON_NO_BENEFIT", refused(await placeC(cA.who, fd.code, { cust: pickupCust, extra: { fulfillment_method: "pickup" } }), "COUPON_NO_BENEFIT"));
+await asOwner(`update public.business_settings set delivery_enabled=false where id=1`);
+check("...and its preview says so when delivery is off", (await cA.who(`select public.preview_coupon($1, 12000) as p`, [fd.code])).rows[0].p.reason === "COUPON_NO_BENEFIT");
+await asOwner(`update public.business_settings set delivery_enabled=true, pickup_enabled=false where id=1`);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

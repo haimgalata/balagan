@@ -7,6 +7,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "balagan",
   "compatibility_date": "2026-10-01",
+  // The site's address (balagan.netivot.workers.dev) stays ON and per-version preview addresses stay OFF on every
+  // deploy — otherwise a deploy can reset the dashboard switch and take the site offline.
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"

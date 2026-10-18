@@ -3,6 +3,7 @@ import { ADMIN_USER, seedSession, sessionFor, stubSupabase, type StubRequestCont
 import { createFakeOrdersDatabase, makeOrder } from "./orders/fakeDatabase";
 import { createFakeCustomers } from "./customers/fakeDatabase";
 import { createFakeCoupons } from "./coupons/fakeDatabase";
+import { createFakeCosts } from "./costs/fakeDatabase";
 import { createFakeDatabase as createSettingsDb } from "./settings/fakeDatabase";
 import { createFakeDatabase as createProductsDb } from "./products/fakeDatabase";
 import { createFakeDatabase as createCategoriesDb } from "./categories/fakeDatabase";
@@ -70,13 +71,13 @@ test("the menu scrolls, every section is reachable and the current one is in vie
   await open(page, createFakeCustomers().handle, "/admin/customers");
   const nav = page.getByRole("navigation", { name: "ניווט ניהול" });
   const links = nav.getByRole("link");
-  expect(await links.count()).toBe(7);
+  await expect(links).toHaveCount(9);
   expect(await nav.evaluate((el) => el.scrollWidth > el.clientWidth), "the menu is wider than a phone and scrolls").toBe(true);
   const current = nav.getByRole("link", { name: "לקוחות" });
-  const inView = async (name: string) => nav.getByRole("link", { name }).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= document.documentElement.clientWidth; });
+  const inView = async (name: string) => nav.getByRole("link", { name }).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= document.documentElement.clientWidth + 1; }); // 1px: sub-pixel layout
   expect(await inView("לקוחות"), "the current section is scrolled into view").toBe(true);
   await expect(current).toHaveAttribute("aria-current", "page");
-  for (const name of ["ראשי", "הזמנות", "קטגוריות", "מוצרים", "קופונים", "הגדרות עסק"]) {
+  for (const name of ["ראשי", "הזמנות", "קטגוריות", "מוצרים", "קופונים", "עלויות ורווח", "סריקה", "הגדרות עסק"]) {
     await nav.getByRole("link", { name }).scrollIntoViewIfNeeded();
     expect(await inView(name), `${name} can be scrolled to`).toBe(true);
   }
@@ -124,6 +125,28 @@ test("coupons fit a phone: list, details and the form", async ({ page }) => {
   await noOverflow(page);
   await page.locator('[role="dialog"][aria-label="פרטי קופון"]').getByRole("button", { name: "עריכה" }).click();
   await expect(page.locator('[role="dialog"][aria-label="עריכת קופון"]')).toBeVisible();
+  await noOverflow(page);
+});
+
+test("costs fit a phone: the list as cards and the detail panel", async ({ page }) => {
+  await open(page, createFakeCosts().handle, "/admin/costs");
+  await expect(page.getByTestId("cost-row-2")).toBeVisible();
+  await noOverflow(page);
+  await expect(page.getByTestId("cost-row-2").locator("td").first(), "a card, not a table cell").toHaveCSS("display", "flex");
+  await page.getByTestId("cost-row-2").getByRole("button", { name: "מרלבורו גולד" }).click();
+  await expect(page.getByTestId("cost-breakdown")).toBeVisible();
+  await noOverflow(page);
+});
+
+test("the scan screen fits a phone, including the product picker", async ({ page }) => {
+  await open(page, createFakeCosts().handle, "/admin/scan");
+  await expect(page.getByTestId("missing-barcodes")).toBeVisible();
+  await page.getByTestId("missing-barcodes").locator("summary").click();
+  await noOverflow(page);
+  await page.getByLabel("מספר ברקוד").fill("7290000000123");
+  await page.getByRole("button", { name: "חיפוש", exact: true }).click();
+  await page.getByRole("button", { name: "כן, חפיסה בודדת" }).click();
+  await expect(page.getByTestId("scan-results")).toBeVisible();
   await noOverflow(page);
 });
 

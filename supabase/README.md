@@ -22,6 +22,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0013_customer_admin.sql` | the OWNER's view of the club: `admin_customer_stats()`, `admin_list_customers()` (searchable/filterable/paginated, never lists deleted members) and `admin_export_audience('sms'\|'email'\|'suppression')` — owner-only (`is_admin()`, not staff), no direct table access; every export is recorded in the closed `customer_exports` log. Needs 0012 first | yes |
 | `migrations/0014_coupons.sql` | **Balagan Club coupons** — a member-only benefit redeemed in `create_order()`: `coupons` (owner-only; code typed by the owner, normalized and locked; independent `max_total_redemptions` / `max_per_member`; percent / fixed / free delivery; dates; first-order-only; archive, never delete), the `coupon_redemptions` ledger (reserved → redeemed → released, history kept, per-member identity = the verified phone), `coupon_events` audit, `coupon_attempts` throttle, `orders.coupon_*` snapshot, `preview_coupon()` for the checkout's apply button, `business_settings.club_offer_text` for the guest teaser. Redefines `create_order`, `release_expired_order`, `confirm_payment`, `transition_order`, `get_my_orders`, `get_business_settings` (each = its previous version + the coupon step). **Apply before deploying a client that sends `coupon_code` or an admin build that reads `coupon_code_snapshot`.** Needs 0013 first | yes |
 | `migrations/0015_pickup.sql` | **Store pickup (איסוף עצמי)** + per-method switches: `orders.fulfillment_method` ('delivery' default \| 'pickup' — no address, no delivery fee, no minimum), new status `ready_for_pickup` (pickup: confirmed → preparing → ready_for_pickup → completed; cancelling a ready order restores stock at once), `business_settings.pickup_enabled/delivery_enabled/cash_enabled/card_enabled/store_address_text` (defaults keep today's behaviour; **card defaults OFF** until a payment provider is wired), and `create_order()` now refuses an order while paused or outside the 'orders' schedule (`ORDERS_CLOSED`, Israel time) or for a switched-off method. Redefines `create_order`, `customer_apply_order` (a pickup order saves no address), `transition_order`, `get_order_status`/`get_my_orders` (+ `fulfillment_method`), `preview_coupon`, `get_business_settings`. **Apply before deploying a client or admin build from this version** (the admin reads `fulfillment_method`). Needs 0014 first | yes |
+| `migrations/0016_costs.sql` | **Costs, net profit and single-pack barcodes (owner only):** `suppliers` (Philip Morris per pack; Globrands / Dubek per carton of 10), `product_costs` (one cost per product, BEFORE VAT, kept out of `products` so it can never reach the public catalog), append-only `cost_history`, the `supplier_items` dictionary (supplier code or printed text → product + units), `barcode_blocklist` (carton barcodes — a trigger refuses them on any product: `BARCODE_BLOCKED`), `products.review_note`, `business_settings.vat_percent` (18) / `low_margin_percent` (5, not exposed by `get_business_settings()`), and `admin_set_product_cost()` / `admin_cost_overview()`. Changes nothing customers see. Needs 0015 first; apply BEFORE `seed-data/pos-import/catalog-import.sql` (it writes `review_note`) | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project, including the club probe (`USER_*` always; `MEMBER_*` optional; `--signups-enabled` after sign-ups are on) — see `docs/CUSTOMER_PERMISSIONS_AUDIT.md` | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
@@ -320,6 +321,20 @@ orders must work at any hour) and puts the exact previous values back in its cle
 
 **Verifying:** `node scripts/verify-order-management.mjs` covers 0015 (pickup without address/fee/minimum, the switches,
 ORDERS_CLOSED around today's hours in Israel time, the pickup lifecycle and its restock, a member's pickup order).
+
+## Costs and barcodes — apply migration 0016 first
+
+Applying 0016 changes nothing customers see. The owner gets two screens: **/admin/costs** ("עלויות ורווח" — per supplier,
+net profit per pack in ₪ and % = sale price ÷ (1 + VAT) − cost before VAT, coloured below the low-margin line; the panel
+shows the calculation, edits the supplier and a manual cost, and the history) and **/admin/scan** ("סריקה" — phone camera
+or typed number; single packs only, a carton barcode goes on the blocklist; known / unknown / wrong-product / new product).
+VAT and the low-margin line are in /admin/settings → "עלויות". Staff see neither.
+
+Invoice costs are loaded by SQL files reviewed in chat (e.g. `seed-data/pos-import/invoice-costs-2026-10.sql`, kept out of
+git) — run order: 0016 → `catalog-import.sql` → the invoice file. Each refuses to run twice.
+
+**Verifying:** `node scripts/verify-order-management.mjs` covers 0016 (owner-only reads, history, the blocklist trigger, no
+leak into the public catalog/settings); `node scripts/security-test.mjs` probes the live project.
 
 ## Design notes worth knowing
 

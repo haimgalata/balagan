@@ -60,6 +60,8 @@ await db.exec(file("0014_coupons.sql"));
 await db.exec(file("0014_coupons.sql")); // re-runnable
 await db.exec(file("0015_pickup.sql"));
 await db.exec(file("0015_pickup.sql")); // re-runnable
+await db.exec(file("0016_costs.sql"));
+await db.exec(file("0016_costs.sql")); // re-runnable
 await db.exec(file("0002_rls.sql"));               // re-running 0002 must not widen is_admin()
 await db.exec(`insert into public.admin_users (user_id, role) values ('${STAFF}', 'staff');`);
 
@@ -293,7 +295,9 @@ const PUBLIC_BY_DESIGN = ["get_storefront_catalog", "check_stock_availability", 
 const GUARDED_ADMIN = ["is_admin", "is_staff", "get_my_role", "expire_stale_orders", "transition_order", "resolve_stock_return",
   "admin_reorder_categories", "admin_reorder_subcategories", "admin_reorder_products", "admin_product_counts",
   // owner's customer tools (0013): each re-checks is_admin() (owner only) inside itself
-  "admin_customer_stats", "admin_list_customers", "admin_export_audience"];
+  "admin_customer_stats", "admin_list_customers", "admin_export_audience",
+  // costs (0016): each re-checks is_admin() (owner only) inside itself
+  "admin_set_product_cost", "admin_cost_overview"];
 // Member-facing (0012): each reads auth.uid() itself, returns only the caller's own data, and is revoked from anon.
 const MEMBER_RPCS = ["get_my_customer", "claim_guest_orders", "join_club", "get_my_orders", "set_marketing_consent", "delete_my_account",
   // coupons (0014): checks the caller's own membership itself, refuses everyone else; revoked from anon
@@ -924,6 +928,48 @@ check("free-delivery coupon on a pickup order: COUPON_NO_BENEFIT", refused(await
 await asOwner(`update public.business_settings set delivery_enabled=false where id=1`);
 check("...and its preview says so when delivery is off", (await cA.who(`select public.preview_coupon($1, 12000) as p`, [fd.code])).rows[0].p.reason === "COUPON_NO_BENEFIT");
 await asOwner(`update public.business_settings set delivery_enabled=true, pickup_enabled=false where id=1`);
+
+// ---- costs, suppliers, barcode blocklist (migration 0016) ---------------------------------------------------
+console.log("\nCosts (0016)");
+check("three suppliers seeded, the owner reads them", (await asOwner(`select id from public.suppliers order by sort_order`)).rows.map((r) => r.id).join() === "philip-morris,globrands,dubek");
+for (const t of ["suppliers", "product_costs", "cost_history", "supplier_items", "barcode_blocklist"]) {
+  const s = await asStaff(`select 1 from public.${t}`), p = await asPlain(`select 1 from public.${t}`), a = await asAnon(`select 1 from public.${t}`);
+  check(`${t}: staff, customer and anonymous see nothing`, (s.rows ?? []).length === 0 && (p.rows ?? []).length === 0 && !a.ok);
+}
+check("nobody writes product_costs / cost_history through the table API (owner included)",
+  !(await asOwner(`insert into public.product_costs (product_id, unit_cost_ex_vat) values ('901', 1)`)).ok
+  && !(await asOwner(`insert into public.cost_history (product_id, unit_cost_ex_vat, source) values ('901', 1, 'manual')`)).ok);
+let c16 = await asOwner(`select public.admin_set_product_cost('901', 'philip-morris', 33.46) as r`);
+check("owner sets a cost through admin_set_product_cost", c16.ok && Number(c16.rows[0].r.unit_cost_ex_vat) === 33.46 && c16.rows[0].r.supplier_id === "philip-morris", c16.error);
+await asOwner(`select public.admin_set_product_cost('901', 'philip-morris', 34.10)`);
+c16 = await asOwner(`select public.admin_set_product_cost('901', 'globrands', null) as r`);
+check("changing only the supplier keeps the cost", c16.ok && Number(c16.rows[0].r.unit_cost_ex_vat) === 34.1 && c16.rows[0].r.supplier_id === "globrands", c16.error);
+check("every cost change is in the history (2 manual rows)", (await su(`select count(*)::int n from public.cost_history where product_id='901'`))[0].n === 2);
+check("staff / customer cannot set a cost", !(await asStaff(`select public.admin_set_product_cost('901', null, 1)`)).ok && !(await asPlain(`select public.admin_set_product_cost('901', null, 1)`)).ok);
+check("a negative cost is refused", !(await asOwner(`select public.admin_set_product_cost('901', null, -1)`)).ok);
+const ov = await asOwner(`select public.admin_cost_overview() as o`);
+const ovp = ov.ok ? ov.rows[0].o.products.find((p) => p.id === "901") : null;
+check("admin_cost_overview: VAT 18 / low line 5, the product with its cost and the previous cost",
+  ov.ok && Number(ov.rows[0].o.vat_percent) === 18 && Number(ov.rows[0].o.low_margin_percent) === 5
+  && ovp && Number(ovp.unit_cost_ex_vat) === 34.1 && Number(ovp.previous_cost_ex_vat) === 33.46 && ov.rows[0].o.suppliers.length === 3, ov.error);
+check("admin_cost_overview is owner-only", !(await asStaff(`select public.admin_cost_overview()`)).ok && !(await asAnon(`select public.admin_cost_overview()`)).ok);
+check("supplier dictionary: owner writes, a code is unique per supplier",
+  (await asOwner(`insert into public.supplier_items (supplier_id, supplier_code, product_id, units_per_supplier_unit) values ('globrands','6200','901',10) returning 1`)).rows?.length === 1
+  && !(await asOwner(`insert into public.supplier_items (supplier_id, supplier_code, product_id) values ('globrands','6200','902')`)).ok
+  && !(await asOwner(`insert into public.supplier_items (supplier_id, product_id) values ('globrands','902')`)).ok);
+await asOwner(`insert into public.barcode_blocklist (barcode, note) values ('7290000000099', 'פקט')`);
+check("a blocked (carton) barcode can never be saved on a product", !(await asOwner(`update public.products set barcode='7290000000099' where id='901'`)).ok);
+check("a single-pack barcode can", (await asOwner(`update public.products set barcode='7290000000011' where id='901' returning 1`)).rows?.length === 1);
+check("review_note: owner sets it; blank is refused",
+  (await asOwner(`update public.products set review_note='מחיר לא מהקופה' where id='901' returning 1`)).rows?.length === 1
+  && !(await asOwner(`update public.products set review_note='  ' where id='901'`)).ok);
+const pubCat = JSON.stringify((await asAnon(`select public.get_storefront_catalog() as c`)).rows[0].c);
+const pubSet = JSON.stringify((await asAnon(`select public.get_business_settings() as s`)).rows[0].s);
+check("nothing about costs, barcodes, suppliers, VAT or review notes reaches the public catalog / settings",
+  !/cost|supplier|vat_percent|low_margin|review_note|barcode|7290000000011/.test(pubCat + pubSet));
+check("VAT / low-margin settings are owner-only", ((await asStaff(`update public.business_settings set vat_percent=17 where id=1 returning 1`)).rows ?? []).length === 0
+  && !(await asOwner(`update public.business_settings set vat_percent=120 where id=1`)).ok);
+await su(`update public.products set barcode=null, review_note=null where id='901'`);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

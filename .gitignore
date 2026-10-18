@@ -9,3 +9,8 @@ dist-ssr
 tests/catalog/__screenshots__/
 test-results/
 playwright-report/
+
+# Purchase costs / POS exports must never reach the public repository
+seed-data/*.xlsx
+seed-data/pos-import/*.xlsx
+seed-data/pos-import/invoice-costs-*.sql

@@ -53,7 +53,7 @@ test.describe("roles and access", () => {
   test("the owner sees every section including Orders", async ({ page }) => {
     await open(page, seed(), ADMIN_USER, "/admin");
     const nav = page.getByRole("navigation", { name: "ניווט ניהול" });
-    await expect(nav.getByRole("link")).toHaveText(["ראשי", "הזמנות", "קטגוריות", "מוצרים", "לקוחות", "קופונים", "הגדרות עסק"]);
+    await expect(nav.getByRole("link")).toHaveText(["ראשי", "הזמנות", "קטגוריות", "מוצרים", "לקוחות", "קופונים", "עלויות ורווח", "סריקה", "הגדרות עסק"]);
   });
 
   test("staff is NOT logged out by the 60-minute idle rule; the owner still is", async ({ page }) => {

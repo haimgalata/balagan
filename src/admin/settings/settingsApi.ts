@@ -27,6 +27,9 @@ export interface BusinessSettingsRow {
   cash_enabled?: boolean;
   card_enabled?: boolean;
   store_address_text?: string | null;
+  // Migration 0016 — owner-only cost settings, never part of get_business_settings().
+  vat_percent?: number | string;
+  low_margin_percent?: number | string;
 }
 
 export interface BusinessSettingsData {

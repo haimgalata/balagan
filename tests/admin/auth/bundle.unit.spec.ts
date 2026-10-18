@@ -112,7 +112,7 @@ test("admin code is a separate on-demand chunk; the customer bundle has none of 
     const others = assets.filter((name) => name !== entryName);
 
     // markers that exist only in admin code
-    const ADMIN_ONLY = ["balagan-admin-auth", "auth/v1", "signInWithPassword", "get_my_role", "noindex,nofollow", "כניסה לניהול", "admin_export_audience", "admin_list_customers", "coupon_redemptions", "coupon_events"];
+    const ADMIN_ONLY = ["balagan-admin-auth", "auth/v1", "signInWithPassword", "get_my_role", "noindex,nofollow", "כניסה לניהול", "admin_export_audience", "admin_list_customers", "coupon_redemptions", "coupon_events", "admin_cost_overview", "admin_set_product_cost", "barcode_blocklist", "zxing"];
     for (const marker of ADMIN_ONLY) expect(entry.includes(marker), `customer bundle must not contain "${marker}"`).toBe(false);
 
     // ...and they do exist in a separate chunk that is loaded on demand
@@ -120,6 +120,11 @@ test("admin code is a separate on-demand chunk; the customer bundle has none of 
     expect(adminChunk, "an admin chunk exists").toBeDefined();
     for (const marker of ["signInWithPassword", "get_my_role", "כניסה לניהול"]) expect(adminChunk!.includes(marker)).toBe(true);
     expect(entry, "the entry reaches the admin only through a dynamic import").toMatch(/import\(["'`]\.\/AdminApp-/);
+
+    // the barcode reader (and its WebAssembly) is its own chunk, loaded only by the scan screen — not even part of the admin chunk
+    expect(adminChunk!.includes("zxing_reader"), "the admin chunk does not carry the barcode reader").toBe(false);
+    expect(adminChunk!, "the admin reaches the barcode reader only through a dynamic import").toMatch(/import\(["'`]\.\/barcodeScanner-/);
+    expect(readdirSync(join(outDir, "assets")).some((name) => name.endsWith(".wasm")), "the reader's .wasm is served from this site").toBe(true);
 
     // customer bundle size guard
     const gzip = gzipSync(Buffer.from(entry)).length;

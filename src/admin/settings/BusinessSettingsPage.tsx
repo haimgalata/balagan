@@ -244,6 +244,64 @@ function FulfillmentSection({ client, initialSettings, busy, run }: { client: Su
   );
 }
 
+/** VAT and the "low margin" line used by the owner's costs screen (migration 0016). Not shown to customers. */
+function CostsSection({ client, initialSettings, busy, run }: { client: SupabaseClient; initialSettings: BusinessSettingsRow; busy: boolean; run: Run }) {
+  const [vat, setVat] = useState(() => String(initialSettings.vat_percent ?? 18));
+  const [low, setLow] = useState(() => String(initialSettings.low_margin_percent ?? 5));
+  const [error, setError] = useState<string | null>(null);
+
+  if (initialSettings.vat_percent === undefined) {
+    return (
+      <fieldset className="flex flex-col gap-2 rounded-lg border border-brand-border bg-brand-bg-elevated p-4">
+        <legend className="px-1 text-base font-semibold text-brand-text">עלויות</legend>
+        <p role="alert" className="text-sm text-brand-danger">יש להריץ את supabase/migrations/0016_costs.sql במסד הנתונים כדי להגדיר מע״מ ורווח נמוך.</p>
+      </fieldset>
+    );
+  }
+
+  const save = async () => {
+    const v = Number(vat);
+    const l = Number(low);
+    const ok = (n: number) => vat.trim() !== "" && Number.isFinite(n) && n >= 0 && n < 100;
+    const problem = !ok(v) || low.trim() === "" || !ok(l) ? "יש להזין אחוזים מ-0 עד 99." : null;
+    setError(problem);
+    if (problem) return;
+    await run(() => updateBusinessSettings(client, { vat_percent: v, low_margin_percent: l }), "הגדרות העלויות נשמרו");
+  };
+
+  return (
+    <fieldset className="flex flex-col gap-3 rounded-lg border border-brand-border bg-brand-bg-elevated p-4" data-testid="costs-settings">
+      <legend className="px-1 text-base font-semibold text-brand-text">עלויות</legend>
+      <p className="text-xs text-brand-text-muted">משמש רק את מסך "עלויות ורווח". הלקוחות לא רואים את זה.</p>
+      <div className="flex flex-wrap gap-4">
+        <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+          מע״מ (%)
+          <input type="text" inputMode="decimal" dir="ltr" value={vat} disabled={busy} onChange={(e) => setVat(e.target.value)} className={`${inputClasses} w-28`} />
+        </label>
+        <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+          רווח נמוך — מתחת ל־(%)
+          <input type="text" inputMode="decimal" dir="ltr" value={low} disabled={busy} onChange={(e) => setLow(e.target.value)} className={`${inputClasses} w-28`} />
+        </label>
+      </div>
+      {error && (
+        <p role="alert" className="text-xs text-brand-danger">
+          {error}
+        </p>
+      )}
+      <Button onClick={() => void save()} disabled={busy} className="self-start">
+        {busy ? (
+          <>
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            שומר…
+          </>
+        ) : (
+          "שמירה"
+        )}
+      </Button>
+    </fieldset>
+  );
+}
+
 function OrdersSection({
   client, initialHours, initialSettings, currentOrdersPaused, busy, run,
 }: {
@@ -377,6 +435,7 @@ export function BusinessSettingsPage({ client }: { client: SupabaseClient }) {
             run={run}
           />
           <FulfillmentSection client={client} initialSettings={data.settings} busy={busy} run={run} />
+          <CostsSection client={client} initialSettings={data.settings} busy={busy} run={run} />
         </div>
       )}
     </div>

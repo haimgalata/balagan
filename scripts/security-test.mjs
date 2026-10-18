@@ -490,6 +490,51 @@ async function couponChecks() {
 }
 
 /**
+ * Costs and barcodes (migration 0016) — read-only / refusal probes, nothing persists. Purchase costs, the supplier
+ * dictionary and the carton-barcode blocklist are the owner's alone; staff, ordinary users and anonymous visitors see and
+ * write nothing, and neither the public catalog nor the public settings carry a cost or the VAT setting.
+ */
+async function costChecks() {
+  let r = await rest("GET", "product_costs?select=product_id&limit=1", { token: adminToken });
+  if (r.status === 404 || pgCode(r) === "PGRST205" || pgCode(r) === "42P01") {
+    skipped.push("costs (apply supabase/migrations/0016_costs.sql, then re-run)");
+    section("Costs  --  SKIPPED: migration 0016 is not applied yet");
+    return;
+  }
+  section("Costs and barcodes (migration 0016) — owner only");
+  const TABLES = ["suppliers", "product_costs", "cost_history", "supplier_items", "barcode_blocklist"];
+  let ownerReads = r.status === 200;
+  for (const t of TABLES.slice(1)) ownerReads = ownerReads && (await rest("GET", `${t}?select=*&limit=1`, { token: adminToken })).status === 200;
+  check("the owner can read every costs table", ownerReads);
+  r = await rpc("admin_cost_overview", adminToken);
+  check("the owner gets admin_cost_overview()", r.status === 200 && Array.isArray(r.json?.products), brief(r));
+  r = await rest("POST", "product_costs", { token: adminToken, body: { product_id: "1", unit_cost_ex_vat: 1 } });
+  check("even the owner writes costs only through admin_set_product_cost() (no direct insert)", refused(r), brief(r));
+  r = await rest("DELETE", "cost_history?id=eq.-1", { token: adminToken });
+  check("the cost history cannot be deleted through the API", refused(r) || isEmpty(r), brief(r));
+
+  const who = [["anon", ANON], ...(userToken ? [["an ordinary logged-in user", userToken]] : []), ...(staffToken ? [["staff", staffToken]] : [])];
+  for (const [name, token] of who) {
+    for (const t of TABLES) {
+      r = await rest("GET", `${t}?select=*&limit=1`, { token });
+      check(`${name} sees nothing in ${t}`, deniedOrEmpty(r), brief(r));
+    }
+    r = await rpc("admin_cost_overview", token);
+    check(`${name} cannot call admin_cost_overview()`, refused(r), brief(r));
+    r = await rpc("admin_set_product_cost", token, { p_product_id: "1", p_supplier_id: null, p_cost_ex_vat: 1 });
+    check(`${name} cannot set a cost`, refused(r), brief(r));
+    r = await rest("POST", "barcode_blocklist", { token, body: { barcode: "0000000000000", note: "probe" } });
+    check(`${name} cannot add to the barcode blocklist`, refused(r), brief(r));
+    r = await rest("POST", "supplier_items", { token, body: { supplier_id: "dubek", supplier_code: "ZZPROBE", product_id: "1", units_per_supplier_unit: 10 } });
+    check(`${name} cannot write the supplier dictionary`, refused(r), brief(r));
+  }
+  r = await call("POST", `${URL_}/rest/v1/rpc/get_business_settings`, { body: {} });
+  check("the public settings carry neither the VAT nor the low-margin setting", r.status === 200 && !("vat_percent" in (r.json ?? {})) && !("low_margin_percent" in (r.json ?? {})), `HTTP ${r.status}`);
+  r = await call("POST", `${URL_}/rest/v1/rpc/get_storefront_catalog`, { body: {} });
+  check("the public catalog carries no cost, supplier, barcode or review note", r.status === 200 && !/unit_cost|supplier|review_note|barcode/.test(r.text), `HTTP ${r.status}`);
+}
+
+/**
  * Part 3 (opt-in: --signups-enabled) — for AFTER public sign-ups are switched on. Instead of expecting self-registration
  * to be refused, proves a freshly self-registered user has no power at all. NOTE: it creates a throwaway, unconfirmed
  * user that this script cannot delete (no service-role key, by design) — remove it in Authentication -> Users.
@@ -1276,6 +1321,7 @@ async function main() {
 
   // ------------------------------------------------------------------- 5g. coupons (migration 0014)
   await couponChecks();
+  await costChecks();
 
   // ------------------------------------------------------------------- 6. sign-ups
   if (SIGNUPS_ENABLED) {

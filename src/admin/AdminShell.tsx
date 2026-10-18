@@ -11,6 +11,9 @@ import { CustomersPage } from "@/admin/customers/CustomersPage";
 import { CUSTOMERS_PATH } from "@/admin/customers/customersRoute";
 import { CouponsPage } from "@/admin/coupons/CouponsPage";
 import { COUPONS_PATH } from "@/admin/coupons/couponsRoute";
+import { CostsPage } from "@/admin/costs/CostsPage";
+import { ScanPage } from "@/admin/costs/ScanPage";
+import { COSTS_PATH, SCAN_PATH } from "@/admin/costs/costsRoute";
 import { ORDERS_PATH, isOrdersPath } from "@/admin/orders/ordersRoute";
 import type { AdminRole } from "@/admin/useAdminSession";
 
@@ -29,6 +32,8 @@ const NAV_ITEMS = [
   { label: "מוצרים", path: `${ADMIN_ROOT}/products`, enabled: true, ownerOnly: true },
   { label: "לקוחות", path: CUSTOMERS_PATH, enabled: true, ownerOnly: true },
   { label: "קופונים", path: COUPONS_PATH, enabled: true, ownerOnly: true },
+  { label: "עלויות ורווח", path: COSTS_PATH, enabled: true, ownerOnly: true },
+  { label: "סריקה", path: SCAN_PATH, enabled: true, ownerOnly: true },
   { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true, ownerOnly: true },
 ] as const;
 
@@ -190,6 +195,10 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
           <CustomersPage client={client} />
         ) : path === COUPONS_PATH ? (
           <CouponsPage client={client} />
+        ) : path === COSTS_PATH ? (
+          <CostsPage client={client} />
+        ) : path === SCAN_PATH ? (
+          <ScanPage client={client} />
         ) : path === `${ADMIN_ROOT}/settings` ? (
           <BusinessSettingsPage client={client} />
         ) : (

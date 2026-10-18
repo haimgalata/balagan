@@ -18,6 +18,7 @@ environment or `.env`/`.env.production*`, or if the build contains a dev-only ma
 - [ ] **Host build settings:** only `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and (optionally) `VITE_CATALOG_SOURCE`. No other `VITE_*`.
 - [ ] **SPA fallback** configured on the host (see `CLAUDE.md`), so `/admin`, `/checkout` and `/account` work on refresh.
 - [ ] **MFA for the owner** (still deferred, see `CLAUDE.md`) before the site goes live to real customers.
-- [ ] **Migrations applied in order** (`supabase/README.md`), `0014_coupons.sql` before any client that sends a coupon, `0015_pickup.sql` before any client/admin build from the pickup version.
+- [ ] **Migrations applied in order** (`supabase/README.md`), `0014_coupons.sql` before any client that sends a coupon, `0015_pickup.sql` before any client/admin build from the pickup version, `0016_costs.sql` before an admin build with the costs/scan screens (and before the POS catalog import).
 - [ ] **Ordering setup** in `/admin/settings`: the online-order hours are right (the database now refuses orders outside them), "איסוף עצמי מהחנות" chosen with the store address typed, payment methods as decided.
+- [ ] **Supplier invoices and the POS export stay out of git** (the repository is public): `seed-data/catalogs (20).xlsx`, invoice photos, `seed-data/pos-import/invoice-costs-*.sql` / `*-review.xlsx` contain purchase costs.
 - [ ] **Card payments** (not built yet): payment provider account (confirm it accepts a tobacco merchant), its keys only in Supabase secrets, the payment Edge Functions + signature-verified webhook, the expiry sweep scheduled, `CARD_PAYMENTS_READY` in `src/storefront/lib/fulfillment.ts` turned on, end-to-end test in the provider's sandbox — then `card_enabled` in settings.

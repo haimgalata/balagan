@@ -6,6 +6,7 @@ import { Drawer } from "@/shared/ui/Drawer";
 import type { CategoryRow, SubcategoryRow } from "@/admin/categories/categoriesApi";
 import { ImageUploader } from "@/admin/products/ImageUploader";
 import { ProductImagePicker } from "@/admin/products/ProductImagePicker";
+import { ProductCostNote } from "@/admin/costs/ProductCostNote";
 import type { ProductRow, ProductWriteFields } from "@/admin/products/productsApi";
 import type { AdminError } from "@/admin/products/productErrors";
 import { approxPricePerUnit, validateProduct, type ProductDraft, type ProductField } from "@/admin/products/productValidation";
@@ -184,6 +185,7 @@ function ProductForm({
       <Field id="p-barcode" label="ברקוד (אופציונלי)">
         <input id="p-barcode" type="text" dir="ltr" autoComplete="off" value={barcode} onChange={(e) => setBarcode(e.target.value)} className={inputClasses} />
       </Field>
+      {mode === "edit" && initial && <ProductCostNote client={client} productId={initial.id} />}
 
       <Field id="p-category" label="קטגוריה" error={submitted && categoryId === "" ? "יש לבחור קטגוריה." : null}>
         <select id="p-category" value={categoryId} onChange={(e) => handleCategoryChange(e.target.value)} className={inputClasses}>

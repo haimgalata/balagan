@@ -22,6 +22,9 @@
        `BusinessInfoBar.tsx`, the sticky element that surfaced this. `html`
        alone is enough to hide the phantom scrollbar. */
     overflow-x: hidden;
+    /* The category tabs collapse changes page height; let the scroll hook, not
+       the browser, decide what that means (see useScrollDirection). */
+    overflow-anchor: none;
   }
 
   body {

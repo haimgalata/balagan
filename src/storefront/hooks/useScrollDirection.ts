@@ -27,6 +27,9 @@ import { useEffect, useRef, useState, type RefObject } from "react";
  * forced `false`, so the element just scrolls with the page like normal
  * content instead of reacting to scroll direction early.
  */
+/** Slightly longer than the 300ms collapse transition in `CategoryBrowser`. */
+const SETTLE_MS = 450;
+
 export function useScrollDirection(
   threshold = 16,
   activation?: { ref: RefObject<HTMLElement | null>; offset?: number },
@@ -36,6 +39,9 @@ export function useScrollDirection(
   const frame = useRef(0);
   const activationY = useRef<number | null>(null);
   const activated = useRef(!activation);
+  // Until this timestamp, scroll events are treated as the layout's own
+  // reaction to the last collapse/expand (see the settle note below).
+  const settleUntil = useRef(0);
 
   const activationRef = activation?.ref;
   const activationOffset = activation?.offset ?? 0;
@@ -67,16 +73,33 @@ export function useScrollDirection(
           }
         }
 
+        // Collapsing/expanding the element changes the page height, and the
+        // browser answers with a scroll-position correction (scroll anchoring,
+        // clamping near the bottom). That correction is not the visitor
+        // scrolling; reading it as a direction change re-toggles the element
+        // and loops (flicker). So while the change settles, ignore events and
+        // re-baseline on the resulting position.
+        if (performance.now() < settleUntil.current) {
+          lastY.current = y;
+          return;
+        }
+
         const delta = y - lastY.current;
 
         if (y <= 0) {
           setHidden(false);
           lastY.current = y;
         } else if (delta >= threshold) {
-          setHidden(true);
+          setHidden((prev) => {
+            if (!prev) settleUntil.current = performance.now() + SETTLE_MS;
+            return true;
+          });
           lastY.current = y;
         } else if (delta <= -threshold) {
-          setHidden(false);
+          setHidden((prev) => {
+            if (prev) settleUntil.current = performance.now() + SETTLE_MS;
+            return false;
+          });
           lastY.current = y;
         }
       });

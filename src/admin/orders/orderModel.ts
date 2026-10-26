@@ -3,12 +3,25 @@
  * small formatters. No React, no Supabase — unit-tested directly. The DATABASE is what actually enforces the
  * transition rules (`transition_order()`, migrations 0010/0015); this only decides what the screen offers.
  *
- * Two lifecycles (migration 0015): delivery  confirmed -> preparing -> out_for_delivery -> completed
- *                                   pickup    confirmed -> preparing -> ready_for_pickup -> completed
+ * Two lifecycles (migrations 0015/0017): delivery  confirmed -> preparing -> ready_for_dispatch -> out_for_delivery -> completed
+ *                                         pickup    confirmed -> preparing -> ready_for_pickup -> completed
+ * A delivery order placed WITHOUT a window (the owner defined none) skips ready_for_dispatch, as before 0017. For an
+ * order that belongs to a delivery run, leaving for the road and handing over happen only through the courier's run
+ * (depart / complete / fail), never from the board.
  */
 import type { AdminRole } from "@/admin/useAdminSession";
 
-export type OrderStatus = "pending" | "confirmed" | "preparing" | "out_for_delivery" | "ready_for_pickup" | "completed" | "cancelled" | "expired";
+export type OrderStatus =
+  | "pending"
+  | "confirmed"
+  | "preparing"
+  | "ready_for_dispatch"
+  | "out_for_delivery"
+  | "ready_for_pickup"
+  | "delivery_failed"
+  | "completed"
+  | "cancelled"
+  | "expired";
 export type FulfillmentMethod = "delivery" | "pickup";
 export type PaymentStatus = "pending" | "paid" | "failed" | "cancelled";
 export type PaymentMethod = "cash" | "card";
@@ -72,13 +85,19 @@ export interface OrderRow {
   cancelled_at: string | null;
   cancel_reason: string | null;
   stock_return_status: StockReturnStatus;
+  // Migration 0017 (missing on rows read before it)
+  delivery_window_id?: string | null;
+  /** "HH:MM:SS" — the window's departure time when the order was placed. */
+  delivery_departure_time?: string | null;
+  delivery_run_id?: string | null;
+  delivery_failed_reason?: string | null;
   order_items?: OrderItemRow[];
   order_status_events?: OrderEventRow[];
 }
 
 /** Statuses that are still "in the shop's hands" — the Active board's lanes. */
-export const ACTIVE_STATUSES = ["confirmed", "preparing", "out_for_delivery", "ready_for_pickup"] as const;
-export const FINISHED_STATUSES = ["completed", "cancelled", "expired"] as const;
+export const ACTIVE_STATUSES = ["confirmed", "preparing", "ready_for_dispatch", "out_for_delivery", "ready_for_pickup"] as const;
+export const FINISHED_STATUSES = ["completed", "cancelled", "expired", "delivery_failed"] as const;
 export type ActiveStatus = (typeof ACTIVE_STATUSES)[number];
 
 export const isActive = (status: OrderStatus): status is ActiveStatus => (ACTIVE_STATUSES as readonly string[]).includes(status);
@@ -87,8 +106,10 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   pending: "ממתינה לתשלום",
   confirmed: "חדשה",
   preparing: "בהכנה",
+  ready_for_dispatch: "מוכנה למשלוח",
   out_for_delivery: "בדרך ללקוח",
   ready_for_pickup: "מוכנה לאיסוף",
+  delivery_failed: "לא נמסרה",
   completed: "נמסרה",
   cancelled: "בוטלה",
   expired: "פג תוקף",
@@ -126,15 +147,24 @@ export interface AdvanceAction {
   to: OrderStatus;
   label: string;
 }
-export function advanceAction(status: OrderStatus, fulfillment: FulfillmentMethod = "delivery"): AdvanceAction | null {
+export interface DeliveryContext {
+  /** The order was placed into a delivery window (migration 0017) — it must pass through ready_for_dispatch. */
+  windowed?: boolean;
+  /** The order belongs to a delivery run — only the courier's run moves it out and hands it over. */
+  inRun?: boolean;
+}
+export function advanceAction(status: OrderStatus, fulfillment: FulfillmentMethod = "delivery", delivery: DeliveryContext = {}): AdvanceAction | null {
   const pickup = fulfillment === "pickup";
   switch (status) {
     case "confirmed":
       return { to: "preparing", label: "התחל הכנה" };
     case "preparing":
-      return pickup ? { to: "ready_for_pickup", label: "מוכנה לאיסוף" } : { to: "out_for_delivery", label: "יצאה למשלוח" };
+      if (pickup) return { to: "ready_for_pickup", label: "מוכנה לאיסוף" };
+      return delivery.windowed ? { to: "ready_for_dispatch", label: "מוכנה למשלוח" } : { to: "out_for_delivery", label: "יצאה למשלוח" };
+    case "ready_for_dispatch":
+      return null; // the courier takes it from here (depart_delivery_run)
     case "out_for_delivery":
-      return pickup ? null : { to: "completed", label: "נמסרה" };
+      return pickup || delivery.inRun ? null : { to: "completed", label: "נמסרה" };
     case "ready_for_pickup":
       return pickup ? { to: "completed", label: "נאספה" } : null;
     default:
@@ -147,6 +177,8 @@ export function backAction(status: OrderStatus, role: AdminRole, fulfillment: Fu
   switch (status) {
     case "preparing":
       return { to: "confirmed", label: "חזרה ל״חדשה״" };
+    case "ready_for_dispatch":
+      return { to: "preparing", label: "חזרה להכנה" };
     case "out_for_delivery":
     case "ready_for_pickup":
       return status === lastStep(fulfillment) ? { to: "preparing", label: "חזרה להכנה" } : null;
@@ -263,7 +295,17 @@ export function addressDetails(o: Pick<OrderRow, "entrance" | "floor" | "apartme
 
 /** Order kinds the board treats specially. */
 export const needsStockReturn = (o: Pick<OrderRow, "order_status" | "stock_return_status">): boolean =>
-  o.order_status === "cancelled" && o.stock_return_status === "pending_return";
+  (o.order_status === "cancelled" || o.order_status === "delivery_failed") && o.stock_return_status === "pending_return";
+
+/** Delivery context for the buttons: whether the order was placed into a window / belongs to a run. */
+export const deliveryContext = (o: Pick<OrderRow, "delivery_window_id" | "delivery_run_id">): DeliveryContext => ({
+  windowed: !!o.delivery_window_id,
+  inRun: !!o.delivery_run_id,
+});
+
+/** "יציאה ב-18:00" for an order placed into a window, else null. */
+export const departureLabel = (o: Pick<OrderRow, "delivery_departure_time">): string | null =>
+  o.delivery_departure_time ? `יציאה ב-${o.delivery_departure_time.slice(0, 5)}` : null;
 
 /** Paid money with no order behind it (expired/cancelled after paying) — the "needs manual attention" signal from 0009. */
 export const paidButDead = (o: Pick<OrderRow, "order_status" | "payment_status">): boolean =>

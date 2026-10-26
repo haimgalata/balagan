@@ -57,6 +57,11 @@ export function useActiveOrders(client: SupabaseClient) {
         window.clearTimeout(debounce);
         debounce = window.setTimeout(() => void refresh(), EVENT_DEBOUNCE_MS);
       })
+      // a courier taking / leaving a run (migration 0017) is the same "reload now" signal
+      .on("postgres_changes", { event: "*", schema: "public", table: "delivery_runs" }, () => {
+        window.clearTimeout(debounce);
+        debounce = window.setTimeout(() => void refresh(), EVENT_DEBOUNCE_MS);
+      })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           setRealtime("live");

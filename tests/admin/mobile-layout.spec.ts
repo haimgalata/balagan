@@ -1,6 +1,6 @@
 import { test, expect } from "../catalog/fixtures";
-import { ADMIN_USER, seedSession, sessionFor, stubSupabase, type StubRequestContext } from "./auth/adminStubs";
-import { createFakeOrdersDatabase, makeOrder } from "./orders/fakeDatabase";
+import { ADMIN_USER, COURIER_USER, seedSession, sessionFor, stubSupabase, type StubRequestContext, type StubUser } from "./auth/adminStubs";
+import { FAKE_COURIER_NAME, FAKE_COURIER_PHONE, createFakeOrdersDatabase, makeOrder } from "./orders/fakeDatabase";
 import { createFakeCustomers } from "./customers/fakeDatabase";
 import { createFakeCoupons } from "./coupons/fakeDatabase";
 import { createFakeCosts } from "./costs/fakeDatabase";
@@ -21,9 +21,9 @@ test.beforeEach(({ mode, vp }) => {
 
 type Handle = (context: StubRequestContext) => Promise<boolean>;
 
-async function open(page: Page, handle: Handle, path: string) {
-  await stubSupabase(page, { extra: handle });
-  await seedSession(page, sessionFor(ADMIN_USER));
+async function open(page: Page, handle: Handle, path: string, user: StubUser = ADMIN_USER) {
+  await stubSupabase(page, { users: [ADMIN_USER, COURIER_USER], extra: handle });
+  await seedSession(page, sessionFor(user));
   await page.goto(path);
   await expect(page.locator("main")).toBeVisible();
 }
@@ -165,5 +165,65 @@ test("products fit a phone", async ({ page }) => {
 test("categories fit a phone", async ({ page }) => {
   await open(page, createCategoriesDb().handle, "/admin/categories");
   await expect(page.getByTestId("category-row").first()).toBeVisible();
+  await noOverflow(page);
+});
+
+test("the board with delivery windows fits a phone: the extra lane and the runs panel", async ({ page }) => {
+  const windowed = { delivery_window_id: "w-18", delivery_departure_time: "18:00:00" };
+  const orders = createFakeOrdersDatabase(
+    [
+      makeOrder(3001, { ...windowed, order_status: "ready_for_dispatch", delivery_run_id: "run-x" }),
+      makeOrder(3002, { ...windowed, order_status: "preparing" }),
+    ],
+    {
+      windows: true,
+      runs: [{ id: "run-x", run_date: "2026-09-20", status: "claimed", courier_id: COURIER_USER.id, courier_name: FAKE_COURIER_NAME, courier_phone: FAKE_COURIER_PHONE, claimed_at: "2026-09-20T06:00:00.000Z", departed_at: null, departure_time: "18:00:00" }],
+    }
+  );
+  await open(page, orders.handle, "/admin/orders");
+  await expect(page.getByTestId("lane-ready_for_dispatch")).toBeVisible();
+  await expect(page.getByTestId("runs-panel")).toBeVisible();
+  await noOverflow(page);
+});
+
+test("the courier's screen fits a phone: open runs, a run on the road, and both hand-over forms", async ({ page }) => {
+  const stops = { delivery_window_id: "w-18", delivery_departure_time: "18:00:00", delivery_run_id: "run-mine" };
+  const orders = createFakeOrdersDatabase(
+    [
+      makeOrder(3101, { ...stops, order_status: "out_for_delivery", delivery_notes: "לצלצל פעמיים וגם להתקשר לפני שמגיעים לכתובת, הכניסה מהחצר האחורית" }),
+      makeOrder(3102, { ...stops, order_status: "out_for_delivery", payment_method: "cash" }),
+      makeOrder(3103, { delivery_window_id: "w-21", delivery_departure_time: "21:00:00", delivery_run_id: "run-open", order_status: "ready_for_dispatch" }),
+    ],
+    {
+      windows: true,
+      runs: [
+        { id: "run-mine", run_date: "2026-09-20", status: "departed", courier_id: COURIER_USER.id, courier_name: FAKE_COURIER_NAME, courier_phone: FAKE_COURIER_PHONE, claimed_at: "2026-09-20T06:00:00.000Z", departed_at: "2026-09-20T07:00:00.000Z", departure_time: "18:00:00" },
+        { id: "run-open", run_date: "2026-09-20", status: "open", courier_id: null, courier_name: null, courier_phone: null, claimed_at: null, departed_at: null, departure_time: "21:00:00" },
+      ],
+    }
+  );
+  await open(page, orders.handle, "/admin/courier", COURIER_USER);
+  await expect(page.getByTestId("my-run")).toBeVisible();
+  await expect(page.getByTestId("open-run")).toBeVisible();
+  await noOverflow(page);
+  const first = page.getByTestId("courier-stop").first();
+  await first.getByRole("button", { name: "נמסר", exact: true }).click();
+  await expect(first.getByRole("checkbox", { name: /בדקתי תעודה מזהה/ })).toBeVisible();
+  await noOverflow(page);
+  await first.getByRole("button", { name: "חזרה" }).click();
+  await first.getByRole("button", { name: "לא נמסר", exact: true }).click();
+  await first.getByLabel("סיבה").selectOption("אחר");
+  await expect(first.getByLabel("פירוט הסיבה")).toBeVisible();
+  await noOverflow(page);
+});
+
+test("the delivery windows editor fits a phone", async ({ page }) => {
+  const db = createSettingsDb({ windows: true });
+  db.windows.push(
+    { id: "w1", departure_time: "13:00:00", order_cutoff_time: "12:00:00", capacity: null, is_active: true },
+    { id: "w2", departure_time: "18:00:00", order_cutoff_time: "17:00:00", capacity: 10, is_active: true }
+  );
+  await open(page, db.handle, "/admin/settings");
+  await expect(page.getByTestId("window-row").first()).toBeVisible();
   await noOverflow(page);
 });

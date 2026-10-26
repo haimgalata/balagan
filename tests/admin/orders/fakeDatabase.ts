@@ -61,8 +61,26 @@ export interface FakeOrder {
   cancelled_at: string | null;
   cancel_reason: string | null;
   stock_return_status: string;
+  // migration 0017
+  delivery_window_id?: string | null;
+  delivery_departure_time?: string | null;
+  delivery_run_id?: string | null;
+  delivery_failed_reason?: string | null;
   order_items: FakeItem[];
   order_status_events: FakeEvent[];
+}
+
+/** A delivery run (migration 0017). The courier's name / phone are copied on claim, like the real table. */
+export interface FakeRun {
+  id: string;
+  run_date: string;
+  status: "open" | "claimed" | "departed" | "finished";
+  courier_id: string | null;
+  courier_name: string | null;
+  courier_phone: string | null;
+  claimed_at: string | null;
+  departed_at: string | null;
+  departure_time: string;
 }
 
 const pgError = (code: string, message: string, status: number) => ({ status, body: { code, message, details: null, hint: null } });
@@ -115,14 +133,26 @@ export function makeOrder(number: number, overrides: Partial<FakeOrder> = {}): F
   return order;
 }
 
-export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
+export interface FakeOrdersOptions {
+  /** the owner has defined delivery windows (get_business_settings() lists them) */
+  windows?: boolean;
+  /** extra runs that already exist (e.g. one nobody has taken) */
+  runs?: FakeRun[];
+}
+
+export const FAKE_COURIER_NAME = "דני השליח";
+export const FAKE_COURIER_PHONE = "0501234567";
+
+export function createFakeOrdersDatabase(initial: FakeOrder[] = [], options: FakeOrdersOptions = {}) {
   const orders: FakeOrder[] = [...initial];
+  const runs: FakeRun[] = [...(options.runs ?? [])];
+  let nextRunId = 1;
   const rpcLog: string[] = [];
   /** ids whose stock was given back (restock happened) */
   const restocked: string[] = [];
   let failAll: { status: number; body?: unknown } | null = null;
 
-  const ACTIVE = ["confirmed", "preparing", "out_for_delivery", "ready_for_pickup"];
+  const ACTIVE = ["confirmed", "preparing", "ready_for_dispatch", "out_for_delivery", "ready_for_pickup"];
   const staffCanSee = (o: FakeOrder) =>
     ACTIVE.includes(o.order_status) || o.stock_return_status === "pending_return" || new Date(o.status_changed_at).getTime() >= FIXED_NOW_MS - 7 * 86_400_000;
 
@@ -192,13 +222,23 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
     if (o.order_status === to) return { status: 200, body: { order_id: o.id, order_status: to, changed: false } };
     if (o.order_status !== expected) return pgError("P0001", `STALE_STATUS: ${o.order_status}`, 400);
     const from = o.order_status;
-    const last = o.fulfillment_method === "pickup" ? "ready_for_pickup" : "out_for_delivery"; // same rule as migration 0015
+    const delivery = o.fulfillment_method !== "pickup";
+    const last = delivery ? "out_for_delivery" : "ready_for_pickup"; // same rule as migrations 0015 / 0017
+    const windowed = !!o.delivery_window_id;
     const ok =
       (from === "confirmed" && ["preparing", "cancelled"].includes(to)) ||
-      (from === "preparing" && [last, "confirmed", "cancelled"].includes(to)) ||
+      (from === "preparing" &&
+        (["confirmed", "cancelled"].includes(to) ||
+          (!delivery && to === "ready_for_pickup") ||
+          (delivery && to === "ready_for_dispatch") ||
+          (delivery && to === "out_for_delivery" && !windowed))) ||
+      (from === "ready_for_dispatch" && delivery && ["out_for_delivery", "preparing", "cancelled"].includes(to)) ||
       (from === last && ["completed", "preparing", "cancelled"].includes(to)) ||
       (from === "completed" && to === last && actor.role === "owner");
     if (!ok) return pgError("P0001", `INVALID_TRANSITION: ${from} -> ${to}`, 400);
+    if (o.delivery_run_id && ((from === "ready_for_dispatch" && to === "out_for_delivery") || (from === "out_for_delivery" && to === "completed"))) {
+      return pgError("P0001", "USE_DELIVERY_RUN", 400);
+    }
     const trimmed = (reason ?? "").trim();
     if (to === "cancelled") {
       if (trimmed === "") return pgError("P0001", "REASON_REQUIRED", 400);
@@ -225,7 +265,107 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
     o.order_status = to;
     o.status_changed_at = new Date(FIXED_NOW_MS).toISOString();
     record(o, "status", from, to, actor, to === "cancelled" ? trimmed : null);
+    if (to === "ready_for_dispatch") attach(o);
+    else if (o.delivery_run_id && ["confirmed", "preparing", "cancelled"].includes(to)) {
+      const run = runs.find((r) => r.id === o.delivery_run_id);
+      o.delivery_run_id = null;
+      if (run) refreshRun(run);
+    }
     return { status: 200, body: { order_id: o.id, order_status: to, payment_status: o.payment_status, stock_return_status: o.stock_return_status, changed: true } };
+  }
+
+  // ---- delivery runs (migration 0017) --------------------------------------------------------------------
+  const today = new Date(FIXED_NOW_MS).toISOString().slice(0, 10);
+  function attach(o: FakeOrder) {
+    if (!o.delivery_window_id || !o.delivery_departure_time) return;
+    let run = runs.find((r) => r.departure_time === o.delivery_departure_time && ["open", "claimed"].includes(r.status));
+    if (!run) {
+      run = { id: `run-${nextRunId++}`, run_date: today, status: "open", courier_id: null, courier_name: null, courier_phone: null, claimed_at: null, departed_at: null, departure_time: o.delivery_departure_time };
+      runs.push(run);
+    }
+    o.delivery_run_id = run.id;
+  }
+  const inRun = (r: FakeRun, statuses: string[]) => orders.filter((o) => o.delivery_run_id === r.id && statuses.includes(o.order_status));
+  function refreshRun(r: FakeRun) {
+    if (r.status === "finished" || inRun(r, ["ready_for_dispatch", "out_for_delivery"]).length > 0) return;
+    if (r.status === "open") runs.splice(runs.indexOf(r), 1);
+    else r.status = "finished";
+  }
+  const houseNumber = (o: FakeOrder) => Number((o.house_number ?? "").replace(/\D/g, "")) || Number.MAX_SAFE_INTEGER;
+  function courierRpc(rpc: string, args: Record<string, unknown>, user: { id: string; email: string }, role: string | null, actor: { label: string; role: string }) {
+    const isCourier = role === "courier";
+    const backOffice = role === "owner" || role === "staff";
+    const nowIso = new Date(FIXED_NOW_MS).toISOString();
+    if (rpc === "courier_list_open_runs" || rpc === "courier_my_runs") {
+      if (!isCourier) return pgError("42501", "NOT_AUTHORIZED", 403);
+      if (rpc === "courier_list_open_runs") {
+        return { status: 200, body: runs.filter((r) => r.status === "open").map((r) => ({
+          id: r.id, run_date: r.run_date, departure_time: r.departure_time,
+          order_count: inRun(r, ["ready_for_dispatch"]).length,
+          streets: [...new Set(inRun(r, ["ready_for_dispatch"]).map((o) => o.street))],
+        })) };
+      }
+      return { status: 200, body: runs.filter((r) => r.courier_id === user.id && (["claimed", "departed"].includes(r.status) || (r.status === "finished" && r.run_date === today))).map((r) => ({
+        id: r.id, status: r.status, run_date: r.run_date, departure_time: r.departure_time, claimed_at: r.claimed_at, departed_at: r.departed_at,
+        stops: inRun(r, ["ready_for_dispatch", "out_for_delivery", "completed", "delivery_failed"])
+          .sort((a, b) => (a.street ?? "").localeCompare(b.street ?? "") || houseNumber(a) - houseNumber(b))
+          .map((o) => ({
+            order_id: o.id, order_number: o.order_number, order_status: o.order_status, first_name: o.first_name, last_name: o.last_name, phone: o.phone,
+            city: o.city, street: o.street, house_number: o.house_number, entrance: o.entrance, floor: o.floor, apartment: o.apartment,
+            intercom_code: o.intercom_code, notes: o.delivery_notes, payment_method: o.payment_method, payment_status: o.payment_status,
+            total_cents: o.total_cents, failed_reason: o.delivery_failed_reason ?? null,
+          })),
+      })) };
+    }
+    if (rpc === "claim_delivery_run" || rpc === "release_delivery_run" || rpc === "depart_delivery_run") {
+      if (!isCourier && !(backOffice && rpc !== "claim_delivery_run")) return pgError("42501", "NOT_AUTHORIZED", 403);
+      const run = runs.find((r) => r.id === args.p_run_id);
+      if (!run) return pgError("P0001", "RUN_NOT_FOUND", 400);
+      if (rpc === "claim_delivery_run") {
+        if (run.courier_id === user.id && run.status !== "open") return { status: 200, body: { run_id: run.id, status: run.status, changed: false } };
+        if (run.status !== "open") return pgError("P0001", "ALREADY_CLAIMED", 400);
+        Object.assign(run, { status: "claimed", courier_id: user.id, courier_name: FAKE_COURIER_NAME, courier_phone: FAKE_COURIER_PHONE, claimed_at: nowIso });
+        return { status: 200, body: { run_id: run.id, status: "claimed", changed: true } };
+      }
+      if (rpc === "release_delivery_run") {
+        if (run.status === "open") return { status: 200, body: { run_id: run.id, status: "open", changed: false } };
+        if (run.status !== "claimed") return pgError("P0001", "RUN_ALREADY_DEPARTED", 400);
+        if (run.courier_id !== user.id && !backOffice) return pgError("42501", "NOT_AUTHORIZED", 403);
+        Object.assign(run, { status: "open", courier_id: null, courier_name: null, courier_phone: null, claimed_at: null });
+        return { status: 200, body: { run_id: run.id, status: "open", changed: true } };
+      }
+      if (run.status === "departed") return { status: 200, body: { run_id: run.id, status: "departed", changed: false } };
+      if (run.status !== "claimed") return pgError("P0001", "RUN_NOT_CLAIMED", 400);
+      if (run.courier_id !== user.id && !backOffice) return pgError("42501", "NOT_AUTHORIZED", 403);
+      const ready = inRun(run, ["ready_for_dispatch"]);
+      if (ready.length === 0) return pgError("P0001", "RUN_EMPTY", 400);
+      for (const o of ready) { o.order_status = "out_for_delivery"; o.status_changed_at = nowIso; record(o, "status", "ready_for_dispatch", "out_for_delivery", actor); }
+      Object.assign(run, { status: "departed", departed_at: nowIso });
+      return { status: 200, body: { run_id: run.id, status: "departed", changed: true, orders: ready.length } };
+    }
+    // complete_delivery_stop / fail_delivery_stop
+    if (!isCourier && !backOffice) return pgError("42501", "NOT_AUTHORIZED", 403);
+    const o = orders.find((x) => x.id === args.p_order_id);
+    if (!o || !o.delivery_run_id) return pgError("P0001", "ORDER_NOT_FOUND", 400);
+    const run = runs.find((r) => r.id === o.delivery_run_id);
+    if (run && run.courier_id !== user.id && !backOffice) return pgError("42501", "NOT_AUTHORIZED", 403);
+    if (rpc === "complete_delivery_stop") {
+      if (o.order_status === "completed") return { status: 200, body: { order_id: o.id, order_status: "completed", changed: false } };
+      if (o.order_status !== "out_for_delivery") return pgError("P0001", `STALE_STATUS: ${o.order_status}`, 400);
+      if (args.p_id_checked !== true) return pgError("P0001", "ID_CHECK_REQUIRED", 400);
+      o.order_status = "completed"; o.completed_at = nowIso; o.status_changed_at = nowIso;
+      if (o.payment_method === "cash" && o.payment_status === "pending") o.payment_status = "paid";
+      record(o, "status", "out_for_delivery", "completed", actor);
+    } else {
+      const reason = String(args.p_reason ?? "").trim();
+      if (o.order_status === "delivery_failed") return { status: 200, body: { order_id: o.id, order_status: "delivery_failed", changed: false } };
+      if (o.order_status !== "out_for_delivery") return pgError("P0001", `STALE_STATUS: ${o.order_status}`, 400);
+      if (reason === "") return pgError("P0001", "REASON_REQUIRED", 400);
+      Object.assign(o, { order_status: "delivery_failed", delivery_failed_reason: reason, stock_return_status: "pending_return", status_changed_at: nowIso });
+      record(o, "status", "out_for_delivery", "delivery_failed", actor, reason);
+    }
+    if (run) refreshRun(run);
+    return { status: 200, body: { order_id: o.id, order_status: o.order_status, changed: true } };
   }
 
   function resolve(orderId: string, outcome: string, actor: { label: string; role: string }) {
@@ -234,7 +374,7 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
     if (outcome === "written_off" && actor.role !== "owner") return pgError("42501", "NOT_AUTHORIZED", 403);
     const target = outcome === "returned" ? "restored" : "written_off";
     if (o.stock_return_status === target) return { status: 200, body: { changed: false } };
-    if (o.order_status !== "cancelled" || o.stock_return_status !== "pending_return") return pgError("P0001", `STALE_STATUS: ${o.stock_return_status}`, 400);
+    if (!["cancelled", "delivery_failed"].includes(o.order_status) || o.stock_return_status !== "pending_return") return pgError("P0001", `STALE_STATUS: ${o.stock_return_status}`, 400);
     if (outcome === "returned") restocked.push(o.id);
     record(o, "stock_return", "pending_return", target, actor);
     o.stock_return_status = target;
@@ -244,8 +384,14 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
   async function handle(ctx: StubRequestContext): Promise<boolean> {
     const { url, method, body, user, json } = ctx;
     const table = /^\/rest\/v1\/orders$/.test(url.pathname);
+    const runsTable = /^\/rest\/v1\/delivery_runs$/.test(url.pathname);
     const rpc = /^\/rest\/v1\/rpc\/([a-z_]+)$/.exec(url.pathname)?.[1];
-    if (!table && rpc !== "transition_order" && rpc !== "resolve_stock_return") return false;
+    const COURIER_RPCS = ["courier_list_open_runs", "courier_my_runs", "claim_delivery_run", "release_delivery_run", "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop"];
+    if (rpc === "get_business_settings" && options.windows) {
+      await json(200, { pickup_enabled: false, delivery_enabled: true, delivery_windows: [{ id: "w1", departure_time: "18:00:00", order_cutoff_time: "17:00:00" }] });
+      return true;
+    }
+    if (!table && !runsTable && rpc !== "transition_order" && rpc !== "resolve_stock_return" && !(rpc && COURIER_RPCS.includes(rpc))) return false;
 
     if (failAll) { await json(failAll.status, failAll.body ?? { message: "boom" }); return true; }
     if (!user) { await json(401, { code: "42501", message: "permission denied", details: null, hint: null }); return true; }
@@ -253,8 +399,27 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
     const actor = { label: user.email, role: role ?? "none" };
     const send = (r: { status: number; body: unknown }) => json(r.status, r.body);
 
-    if (rpc) {
+    if (rpc && COURIER_RPCS.includes(rpc)) {
       if (!role) { await send(pgError("42501", "NOT_AUTHORIZED", 403)); return true; }
+      const args = (body ?? {}) as Record<string, unknown>;
+      rpcLog.push(`${rpc} ${JSON.stringify(args)} by ${user.email}`);
+      await send(courierRpc(rpc, args, user, role, actor as { label: string; role: string }));
+      return true;
+    }
+
+    if (runsTable) {
+      if (role !== "owner" && role !== "staff") { await json(200, []); return true; }
+      const statuses = /^in\.\((.*)\)$/.exec(url.searchParams.get("status") ?? "")?.[1]?.split(",");
+      await json(200, runs.filter((r) => !statuses || statuses.includes(r.status)).map((r) => {
+        const { departure_time, ...rest } = r;
+        return { ...rest, delivery_windows: { departure_time } };
+      }));
+      return true;
+    }
+
+    if (rpc) {
+      // back office only: a courier moves orders through his own run, never through transition_order
+      if (!role || role === "courier") { await send(pgError("42501", "NOT_AUTHORIZED", 403)); return true; }
       const args = (body ?? {}) as Record<string, string | null>;
       rpcLog.push(`${rpc} ${JSON.stringify(args)} by ${user.email}`);
       await send(rpc === "transition_order"
@@ -288,6 +453,7 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = []) {
 
   return {
     orders,
+    runs,
     rpcLog,
     restocked,
     handle,

@@ -10,6 +10,7 @@ import {
   type PaymentMethod,
   type PaymentStatus,
 } from "@/admin/orders/orderModel";
+import { LIVE_RUN_STATUSES, type RunRow } from "@/admin/orders/runModel";
 
 /**
  * Reads and actions for order management. Everything runs as the signed-in back-office user, so Row Level
@@ -27,7 +28,9 @@ const unexpected = (e: unknown): { ok: false; error: OrderError } =>
 const ORDER_COLUMNS =
   "id,order_number,payment_method,fulfillment_method,order_status,payment_status,first_name,last_name,phone,email,city,street,house_number," +
   "entrance,floor,apartment,intercom_code,delivery_notes,subtotal_cents,delivery_fee_cents,discount_cents,coupon_code_snapshot,total_cents," +
-  "created_at,confirmed_at,status_changed_at,completed_at,cancelled_at,cancel_reason,stock_return_status";
+  "created_at,confirmed_at,status_changed_at,completed_at,cancelled_at,cancel_reason,stock_return_status," +
+  "delivery_window_id,delivery_departure_time,delivery_run_id,delivery_failed_reason";
+const RUN_COLUMNS = "id,run_date,status,courier_name,courier_phone,claimed_at,departed_at,delivery_windows(departure_time)";
 const ITEM_COLUMNS =
   "id,product_id,product_name_snapshot,product_brand_snapshot,option,option_label_snapshot,unit_price_cents,quantity,base_units,line_total_cents";
 const EVENT_COLUMNS = "id,kind,from_value,to_value,reason,actor_label,actor_role,created_at";
@@ -42,18 +45,21 @@ export interface BoardData {
   active: OrderRow[];
   /** completed / cancelled / expired since Israel's start of today, newest first */
   finishedToday: OrderRow[];
-  /** cancelled while out for delivery whose goods are not yet confirmed back (any age) */
+  /** cancelled / not delivered while out for delivery whose goods are not yet confirmed back (any age) */
   awaitingReturn: OrderRow[];
+  /** delivery runs that are open, taken or on the road (migration 0017) */
+  runs: RunRow[];
 }
 
 export async function loadBoard(client: SupabaseClient, startOfTodayIso: string): Promise<ApiResult<BoardData>> {
   try {
-    const [active, finished, returns] = await Promise.all([
+    const [active, finished, returns, runs] = await Promise.all([
       client.from("orders").select(WITH_ITEMS).in("order_status", [...ACTIVE_STATUSES]).order("created_at", { ascending: true }),
       client.from("orders").select(WITH_ITEMS).in("order_status", [...FINISHED_STATUSES]).gte("status_changed_at", startOfTodayIso).order("status_changed_at", { ascending: false }),
       client.from("orders").select(WITH_ITEMS).eq("stock_return_status", "pending_return").order("created_at", { ascending: true }),
+      client.from("delivery_runs").select(RUN_COLUMNS).in("status", [...LIVE_RUN_STATUSES]).order("run_date", { ascending: true }),
     ]);
-    const error = active.error ?? finished.error ?? returns.error;
+    const error = active.error ?? finished.error ?? returns.error ?? runs.error;
     if (error) return fail(error);
     return {
       ok: true,
@@ -61,6 +67,7 @@ export async function loadBoard(client: SupabaseClient, startOfTodayIso: string)
         active: (active.data ?? []) as unknown as OrderRow[],
         finishedToday: (finished.data ?? []) as unknown as OrderRow[],
         awaitingReturn: (returns.data ?? []) as unknown as OrderRow[],
+        runs: (runs.data ?? []) as unknown as RunRow[],
       },
     };
   } catch (e) {
@@ -150,6 +157,17 @@ export async function transitionOrder(
       p_to_status: toStatus,
       p_reason: reason ?? null,
     });
+    if (error) return fail(error);
+    return { ok: true, data: { changed: (data as { changed?: boolean } | null)?.changed !== false } };
+  } catch (e) {
+    return unexpected(e);
+  }
+}
+
+/** Back office lets go of a run's courier (one who did not show up). Never after the run has left. */
+export async function releaseDeliveryRun(client: SupabaseClient, runId: string): Promise<ApiResult<{ changed: boolean }>> {
+  try {
+    const { data, error } = await client.rpc("release_delivery_run", { p_run_id: runId });
     if (error) return fail(error);
     return { ok: true, data: { changed: (data as { changed?: boolean } | null)?.changed !== false } };
   } catch (e) {

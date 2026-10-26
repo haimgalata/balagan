@@ -31,7 +31,7 @@ test.describe("the login screen", () => {
     // no sign-up, no password reset, no admin data on screen
     await expect(page.getByText(/הרשמה|שכחתי|Sign up/i)).toHaveCount(0);
     expect(stub.tableCalls()).toHaveLength(0);
-    expect(stub.to("/rest/v1/rpc/get_my_role")).toHaveLength(0);
+    expect(stub.to("/rest/v1/rpc/get_my_access")).toHaveLength(0);
     // the storefront never mounted here
     await expect(page.locator("div.snap-start")).toHaveCount(0);
   });
@@ -66,7 +66,7 @@ test.describe("logging in", () => {
     await expect(page.getByText("בקרוב")).toHaveCount(0);
 
     // the guard asked the database, and every data request carried the admin's own token (never the anon key)
-    expect(stub.to("/rest/v1/rpc/get_my_role")).toHaveLength(1);
+    expect(stub.to("/rest/v1/rpc/get_my_access")).toHaveLength(1);
     expect(stub.tableCalls().length).toBeGreaterThanOrEqual(3);
     for (const call of stub.tableCalls()) expect(call.sub).toBe(ADMIN_USER.id);
     expect(await storedSession(page)).not.toBeNull();
@@ -134,7 +134,7 @@ test.describe("sessions", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: "סקירה" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "כניסה לניהול" })).toHaveCount(0);
-    expect(stub.to("/rest/v1/rpc/get_my_role").length).toBeGreaterThanOrEqual(2); // the login, and again on the reload (dev StrictMode may verify twice)
+    expect(stub.to("/rest/v1/rpc/get_my_access").length).toBeGreaterThanOrEqual(2); // the login, and again on the reload (dev StrictMode may verify twice)
   });
 
   test("a saved session whose owner is no longer an admin is refused and cleared", async ({ page }) => {

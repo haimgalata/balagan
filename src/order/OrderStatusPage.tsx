@@ -9,6 +9,7 @@ import { useStoreStatus } from "@/storefront/hooks/useStoreStatus";
 import { fetchOrderStatus, type PublicOrderStatus } from "@/order/orderStatusApi";
 import { customerStatusLabel, isOpenOrderStatus } from "@/order/orderStatusText";
 import { forgetLastOrder, readLastOrder } from "@/order/lastOrder";
+import { departureNote } from "@/storefront/lib/deliveryWindows";
 
 const STORE_PHONE = "08-994-5190";
 const STORE_PHONE_HREF = "tel:089945190";
@@ -47,7 +48,9 @@ function Centered({ children }: { children: ReactNode }) {
 function stepsFor(order: PublicOrderStatus): string[] {
   return order.fulfillmentMethod === "pickup"
     ? ["confirmed", "preparing", "ready_for_pickup", "completed"]
-    : ["confirmed", "preparing", "out_for_delivery", "completed"];
+    : order.deliveryDepartureTime
+      ? ["confirmed", "preparing", "ready_for_dispatch", "out_for_delivery", "completed"]
+      : ["confirmed", "preparing", "out_for_delivery", "completed"];
 }
 
 function Steps({ order }: { order: PublicOrderStatus }) {
@@ -187,6 +190,8 @@ function OrderView({ order }: { order: PublicOrderStatus }) {
   const pickup = order.fulfillmentMethod === "pickup";
   const status = order.orderStatus;
   const dead = status === "cancelled" || status === "expired";
+  const failed = status === "delivery_failed";
+  const departure = departureNote(order.deliveryDepartureTime);
 
   return (
     <div className="flex flex-col gap-6">
@@ -198,7 +203,7 @@ function OrderView({ order }: { order: PublicOrderStatus }) {
         <span
           role="status"
           className={`rounded-full border px-3 py-1 text-sm font-medium ${
-            dead
+            dead || failed
               ? "border-brand-danger/40 bg-brand-danger/10 text-brand-danger"
               : status === "ready_for_pickup" || status === "completed"
                 ? "border-brand-success/40 bg-brand-success/10 text-brand-success"
@@ -215,6 +220,21 @@ function OrderView({ order }: { order: PublicOrderStatus }) {
         </p>
       )}
 
+      {departure && !dead && !failed && status !== "completed" && status !== "out_for_delivery" && (
+        <p className="rounded-lg border border-brand-border bg-brand-bg-elevated px-3 py-2 text-sm text-brand-text" data-testid="delivery-departure">
+          {departure}. ההגעה אליכם בהמשך הדרך.
+        </p>
+      )}
+
+      {failed && (
+        <p role="alert" className="rounded-lg border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
+          המשלוח לא נמסר. נחזור אליכם בהקדם, ואפשר גם להתקשר:{" "}
+          <a href={STORE_PHONE_HREF} className="underline underline-offset-2">
+            {STORE_PHONE}
+          </a>
+        </p>
+      )}
+
       {dead ? (
         <p className="rounded-lg border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
           {status === "cancelled" ? "ההזמנה בוטלה." : "ההזמנה לא הושלמה (פג הזמן לתשלום)."} לשאלות:{" "}
@@ -222,7 +242,7 @@ function OrderView({ order }: { order: PublicOrderStatus }) {
             {STORE_PHONE}
           </a>
         </p>
-      ) : (
+      ) : failed ? null : (
         status !== "pending" && (
           <div className="rounded-2xl border border-brand-border bg-brand-bg-elevated p-4">
             <Steps order={order} />
@@ -232,7 +252,7 @@ function OrderView({ order }: { order: PublicOrderStatus }) {
 
       {pickup && !dead && status !== "completed" && <PickupCard ready={status === "ready_for_pickup"} />}
 
-      {!dead && status !== "completed" && (
+      {!dead && !failed && status !== "completed" && (
         <p className="text-xs text-brand-text-muted">העמוד מתעדכן מעצמו. אפשר לשמור אותו ולחזור אליו בכל רגע.</p>
       )}
 

@@ -12,6 +12,8 @@ export interface PublicOrderStatus {
   paymentMethod: string;
   fulfillmentMethod: CustomerFulfillment;
   totalCents: number;
+  /** "HH:MM:SS" — when this delivery's window leaves (migration 0017); null for pickup and for orders placed without a window. */
+  deliveryDepartureTime: string | null;
 }
 
 const REQUEST_TIMEOUT_MS = 8000;
@@ -28,6 +30,7 @@ export function parsePublicOrderStatus(value: unknown): PublicOrderStatus | null
     paymentMethod: v.payment_method,
     fulfillmentMethod: v.fulfillment_method === "pickup" ? "pickup" : "delivery",
     totalCents: v.total_cents,
+    deliveryDepartureTime: typeof v.delivery_departure_time === "string" ? v.delivery_departure_time : null,
   };
 }
 

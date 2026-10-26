@@ -100,7 +100,7 @@ test.describe("the order-tracking page", () => {
   });
   test("the status response is checked, and carries no personal data through", () => {
     const ok = parsePublicOrderStatus({ order_number: 7, order_status: "preparing", payment_status: "pending", payment_method: "cash", fulfillment_method: "pickup", total_cents: 900, phone: "x" });
-    expect(ok).toEqual({ orderNumber: 7, orderStatus: "preparing", paymentStatus: "pending", paymentMethod: "cash", fulfillmentMethod: "pickup", totalCents: 900 });
+    expect(ok).toEqual({ orderNumber: 7, orderStatus: "preparing", paymentStatus: "pending", paymentMethod: "cash", fulfillmentMethod: "pickup", totalCents: 900, deliveryDepartureTime: null });
     expect(parsePublicOrderStatus({ order_number: "7" })).toBeNull();
     expect(parsePublicOrderStatus(null)).toBeNull();
   });

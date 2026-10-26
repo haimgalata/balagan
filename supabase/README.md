@@ -23,6 +23,7 @@ The site does **not** use Supabase yet (that is Step 3); until then it behaves e
 | `migrations/0014_coupons.sql` | **Balagan Club coupons** — a member-only benefit redeemed in `create_order()`: `coupons` (owner-only; code typed by the owner, normalized and locked; independent `max_total_redemptions` / `max_per_member`; percent / fixed / free delivery; dates; first-order-only; archive, never delete), the `coupon_redemptions` ledger (reserved → redeemed → released, history kept, per-member identity = the verified phone), `coupon_events` audit, `coupon_attempts` throttle, `orders.coupon_*` snapshot, `preview_coupon()` for the checkout's apply button, `business_settings.club_offer_text` for the guest teaser. Redefines `create_order`, `release_expired_order`, `confirm_payment`, `transition_order`, `get_my_orders`, `get_business_settings` (each = its previous version + the coupon step). **Apply before deploying a client that sends `coupon_code` or an admin build that reads `coupon_code_snapshot`.** Needs 0013 first | yes |
 | `migrations/0015_pickup.sql` | **Store pickup (איסוף עצמי)** + per-method switches: `orders.fulfillment_method` ('delivery' default \| 'pickup' — no address, no delivery fee, no minimum), new status `ready_for_pickup` (pickup: confirmed → preparing → ready_for_pickup → completed; cancelling a ready order restores stock at once), `business_settings.pickup_enabled/delivery_enabled/cash_enabled/card_enabled/store_address_text` (defaults keep today's behaviour; **card defaults OFF** until a payment provider is wired), and `create_order()` now refuses an order while paused or outside the 'orders' schedule (`ORDERS_CLOSED`, Israel time) or for a switched-off method. Redefines `create_order`, `customer_apply_order` (a pickup order saves no address), `transition_order`, `get_order_status`/`get_my_orders` (+ `fulfillment_method`), `preview_coupon`, `get_business_settings`. **Apply before deploying a client or admin build from this version** (the admin reads `fulfillment_method`). Needs 0014 first | yes |
 | `migrations/0016_costs.sql` | **Costs, net profit and single-pack barcodes (owner only):** `suppliers` (Philip Morris per pack; Globrands / Dubek per carton of 10), `product_costs` (one cost per product, BEFORE VAT, kept out of `products` so it can never reach the public catalog), append-only `cost_history`, the `supplier_items` dictionary (supplier code or printed text → product + units), `barcode_blocklist` (carton barcodes — a trigger refuses them on any product: `BARCODE_BLOCKED`), `products.review_note`, `business_settings.vat_percent` (18) / `low_margin_percent` (5, not exposed by `get_business_settings()`), and `admin_set_product_cost()` / `admin_cost_overview()`. Changes nothing customers see. Needs 0015 first; apply BEFORE `seed-data/pos-import/catalog-import.sql` (it writes `review_note`) | yes |
+| `migrations/0017_delivery.sql` | **Delivery windows, runs and the courier:** `delivery_windows` (departure time, order cut-off, optional capacity, on/off; `business_settings.delivery_advance_hours` = how many hours ahead a customer may pick one), `orders.delivery_window_id/delivery_date/delivery_departure_time/delivery_run_id/delivery_failed_reason`, statuses `ready_for_dispatch` and `delivery_failed`, `delivery_runs` (open → claimed → departed → finished; the courier's name and phone are copied on claim) + append-only `delivery_run_events`, the `courier` role (`admin_users.role = 'courier'`, or `can_courier` on an owner/staff row; `is_staff()` is narrowed to owner/staff, `is_courier()`, `get_my_access()`), the courier RPCs (`courier_list_open_runs`, `courier_my_runs`, `claim_delivery_run`, `release_delivery_run`, `depart_delivery_run`, `complete_delivery_stop`, `fail_delivery_stop`) and the public `get_delivery_slots()` (a yes/no per window, never the capacity). Redefines `create_order`, `transition_order`, `resolve_stock_return`, `get_order_status`, `get_my_orders`, `get_business_settings`, `orders_record_events`, `is_staff`. **Apply before deploying a client or admin build from this version** (the admin asks `get_my_access()` and reads `delivery_runs`; checkout calls `get_delivery_slots()`). Needs 0016 first. Changes nothing customers see until the owner defines an active window | yes |
 | `../scripts/security-test.mjs` | Live test of all of the above against your real project, including the club probe (`USER_*` always; `MEMBER_*` optional; `--signups-enabled` after sign-ups are on) — see `docs/CUSTOMER_PERMISSIONS_AUDIT.md` | — |
 
 `seed.sql` (generated, Step 2) loads the existing catalog — see "Step 2" below.
@@ -335,6 +336,52 @@ git) — run order: 0016 → `catalog-import.sql` → the invoice file. Each ref
 
 **Verifying:** `node scripts/verify-order-management.mjs` covers 0016 (owner-only reads, history, the blocklist trigger, no
 leak into the public catalog/settings); `node scripts/security-test.mjs` probes the live project.
+
+## Delivery windows, runs and the courier — apply migration 0017 first
+
+**What the owner does** (`/admin/settings` → "חלונות משלוח"): add the departure slots (e.g. 13:00 / 18:00 / 21:00), each with the
+last moment an order may still join it (the cut-off) and, if wanted, a capacity (empty = unlimited), and set "how many hours
+ahead" a customer may pick a slot (a 9:00 order cannot pick the 18:00 slot when this is 4). With **no active window** nothing
+changes: checkout asks for none and no run is ever created. Delivery stays Netivot-only, card-only-in-practice and the fee fixed,
+as before; this migration does not touch payment.
+
+**Orders and runs.** A delivery order placed into a window is `confirmed → preparing → ready_for_dispatch → out_for_delivery →
+completed` (an order placed without a window still goes `preparing → out_for_delivery`). When a packed order becomes
+`ready_for_dispatch` it joins that window's run (created on demand, even for one order). A courier takes an **open** run
+("אני לוקח" — `claim_delivery_run`, first one wins, `ALREADY_CLAIMED` for the rest), presses "יצאתי" (`depart_delivery_run`: every
+ready order goes out at once) and then marks each stop **delivered** (`complete_delivery_stop`, after confirming an ID check) or
+**not delivered** (`fail_delivery_stop`, reason required). An order that becomes ready after the run left gets a new run. From the
+board, out/delivered of an order that belongs to a run is refused (`USE_DELIVERY_RUN`); taking an order back or cancelling it
+removes it from the run (an empty unclaimed run disappears).
+
+**Not delivered.** The order becomes `delivery_failed` (final) with `stock_return_status = 'pending_return'`: stock stays out until
+back office presses "המוצרים חזרו למלאי" (`resolve_stock_return`; only the owner may write it off), exactly like a cancel after
+dispatch. A paid card order is **refunded by hand at the payment provider** — nothing here refunds money.
+
+**Nobody shows up.** A run a courier took but did not leave with is flagged on the board once it is due; the owner rings him
+(the board shows his phone) and, if needed, presses "שחרור השליח" (`release_delivery_run`). Nothing is released automatically.
+
+**Creating a courier** (same manual pattern as staff; sign-ups stay off). Authentication → Users → Add user, then:
+```sql
+insert into public.admin_users (user_id, role, display_name, phone)
+select id, 'courier', 'דני', '0501234567' from auth.users where email = 'courier@your-store.example';
+-- an employee who is also a courier: keep role 'staff' (or 'owner') and add the flag instead
+update public.admin_users set can_courier = true, display_name = 'דני', phone = '0501234567' where user_id = (select id from auth.users where email = '...');
+```
+The name and phone are what the owner sees on the board after the courier takes a run. A courier-only account signs in to
+`/admin/courier` and nothing else; it is exempt from the idle logout (a phone on the road).
+
+**What a courier can and cannot see.** No table at all (not orders, items, history, runs, windows, customers). Open runs show the
+slot, how many orders and which streets — **no names, phones or addresses**. Only after claiming does `courier_my_runs()` return
+the stops (name, phone, address, entrance/floor/apartment/intercom, notes) for runs he holds; a run finished today stays on his
+screen so the last hand-over does not make it vanish. `is_staff()` is now owner/staff only, so a courier inherits none of the
+staff policies; `transition_order()` and `resolve_stock_return()` refuse him.
+
+**Verifying:** `node scripts/verify-order-management.mjs` (needs `npm i --no-save @electric-sql/pglite`) replays 0001–0017 (0010–0017
+twice) on an in-process Postgres and checks windows (cut-off / hours ahead / capacity / legacy), runs, the claim race, the details
+courier-only-after-claim rule, ID check, failed delivery → pending_return → restock, cancel from `ready_for_dispatch`, and that
+`get_delivery_slots()` never exposes a capacity. `scripts/security-test.mjs` has a "Delivery" section (set `COURIER_EMAIL` /
+`COURIER_PASSWORD` for the courier half); it switches active windows off for the minute it runs and back on in cleanup.
 
 ## Design notes worth knowing
 

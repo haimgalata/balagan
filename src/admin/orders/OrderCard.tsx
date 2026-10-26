@@ -9,6 +9,7 @@ import {
   STALE_NEW_ORDER_MS,
   STOCK_RETURN_LABEL,
   addressLine,
+  departureLabel,
   isPickup,
   formatAge,
   formatShekel,
@@ -50,6 +51,11 @@ export function OrderCard({ order, role, actions, now, onOpen }: OrderCardProps)
             {formatAge(order.created_at, now)}
           </span>
         </div>
+        {departureLabel(order) && (
+          <div className="mt-1 inline-block rounded-full border border-brand-gold/50 px-2 py-0.5 text-xs font-medium text-brand-gold" data-testid="order-departure">
+            {departureLabel(order)}
+          </div>
+        )}
         <div className="mt-1 text-base font-medium text-brand-text">{fullName(order)}</div>
         <div className={`text-sm ${isPickup(order) ? "font-medium text-brand-gold" : "text-brand-text-muted"}`}>{addressLine(order)}</div>
         <div className="text-sm text-brand-text-muted" dir="ltr" style={{ textAlign: "start" }}>
@@ -82,10 +88,10 @@ export function OrderCard({ order, role, actions, now, onOpen }: OrderCardProps)
           </span>
         </div>
         {order.delivery_notes && <div className="mt-1 rounded bg-brand-bg px-2 py-1 text-xs text-brand-text-muted">הערה: {order.delivery_notes}</div>}
-        {order.order_status === "cancelled" && (
+        {(order.order_status === "cancelled" || order.order_status === "delivery_failed") && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-brand-danger">
             <StatusBadge status={order.order_status} fulfillment={order.fulfillment_method} />
-            <span>{order.cancel_reason}</span>
+            <span>{order.order_status === "cancelled" ? order.cancel_reason : order.delivery_failed_reason}</span>
             <span className="text-brand-text-muted">{STOCK_RETURN_LABEL[order.stock_return_status]}</span>
           </div>
         )}

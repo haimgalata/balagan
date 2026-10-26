@@ -12,25 +12,37 @@ export type AdminSessionState =
   | { status: "signedOut"; notice: SignedOutNotice | null }
   /** Signed in, but we could not confirm admin status (e.g. no connection). The session is kept. */
   | { status: "error" }
-  | { status: "admin"; email: string; role: AdminRole };
+  | { status: "admin"; email: string; role: AdminRole; courier: boolean };
 
-/** 'owner' = full admin; 'staff' = order handling only. Drives the screen; the database enforces it. */
-export type AdminRole = "owner" | "staff";
+/**
+ * 'owner' = full admin; 'staff' = order handling only; 'courier' = delivery runs only (migration 0017).
+ * Drives the screen; the database enforces it.
+ */
+export type AdminRole = "owner" | "staff" | "courier";
 
 export type SignInFailure = "invalid-credentials" | "network" | "too-many-attempts" | "not-authorized" | "unknown";
 export type SignInResult = { ok: true } | { ok: false; reason: SignInFailure };
 
-type Verdict = { kind: "ok"; role: AdminRole } | { kind: "not-admin" } | { kind: "error" };
+type Verdict = { kind: "ok"; role: AdminRole; courier: boolean } | { kind: "not-admin" } | { kind: "error" };
+
+const isRole = (value: unknown): value is AdminRole => value === "owner" || value === "staff" || value === "courier";
 
 /**
- * Asks the database who the signed-in user is (`get_my_role()`, backed by the `admin_users` allow-list:
- * 'owner', 'staff' or nothing). This only drives what the screen shows — every read and write is
+ * Asks the database who the signed-in user is (`get_my_access()`: the role from the `admin_users` allow-list plus
+ * whether this account also drives delivery runs). A database that has not applied migration 0017 yet answers with
+ * the older `get_my_role()` instead. This only drives what the screen shows — every read and write is
  * independently enforced by Row Level Security / the order RPCs, so a tampered browser gains nothing.
  */
 async function verifyAdmin(client: SupabaseClient): Promise<Verdict> {
+  const access = await client.rpc("get_my_access");
+  if (!access.error) {
+    const data = access.data as { role?: unknown; courier?: unknown } | null;
+    return isRole(data?.role) ? { kind: "ok", role: data.role, courier: data.courier === true || data.role === "courier" } : { kind: "not-admin" };
+  }
+  if (access.error.code !== "PGRST202") return { kind: "error" };
   const { data, error } = await client.rpc("get_my_role");
   if (error) return { kind: "error" };
-  return data === "owner" || data === "staff" ? { kind: "ok", role: data } : { kind: "not-admin" };
+  return data === "owner" || data === "staff" ? { kind: "ok", role: data, courier: false } : { kind: "not-admin" };
 }
 
 /** Ends the session everywhere (server-side revoke) and makes sure nothing stays in localStorage. */
@@ -62,7 +74,8 @@ function classifySignInError(error: AuthError): SignInFailure {
  *  - `signIn` / `signOut`: email + password login; logout revokes the session on the server too.
  *  - Idle logout: after `IDLE_LOGOUT_MS` (60 min) without a click, key or touch, an OWNER is signed out. The
  *    shared STAFF account is exempt — it sits on the order terminal all day, where nobody "clicks" while orders
- *    arrive, and it can only handle orders (enforced by the database), so leaving it signed in is safe.
+ *    arrive, and it can only handle orders (enforced by the database), so leaving it signed in is safe. A COURIER
+ *    (a phone in a pocket on the road) is exempt for the same reason.
  */
 export function useAdminSession() {
   const client = config ? getAdminClient(config) : null;
@@ -80,7 +93,7 @@ export function useAdminSession() {
     const verdict = await verifyAdmin(client);
     if (!alive.current) return;
     if (verdict.kind === "ok") {
-      setState({ status: "admin", email: data.session.user.email ?? "", role: verdict.role });
+      setState({ status: "admin", email: data.session.user.email ?? "", role: verdict.role, courier: verdict.courier });
     } else if (verdict.kind === "not-admin") {
       await clearSession(client);
       if (alive.current) setState({ status: "signedOut", notice: "not-authorized" });
@@ -114,7 +127,7 @@ export function useAdminSession() {
 
       const verdict = await verifyAdmin(client);
       if (verdict.kind === "ok") {
-        setState({ status: "admin", email: data.user.email ?? email.trim(), role: verdict.role });
+        setState({ status: "admin", email: data.user.email ?? email.trim(), role: verdict.role, courier: verdict.courier });
         return { ok: true };
       }
       await clearSession(client); // never keep a non-admin (or unverifiable) session around

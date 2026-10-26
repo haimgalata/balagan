@@ -20,7 +20,7 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "  ok " : "FAIL "} ${name}${!ok && detail ? `  -> ${detail}` : ""}`);
 };
 
-const OWNER = randomUUID(), STAFF = randomUUID(), PLAIN = randomUUID();
+const OWNER = randomUUID(), STAFF = randomUUID(), PLAIN = randomUUID(), COURIER = randomUUID(), COURIER2 = randomUUID();
 const MEM1 = randomUUID(), MEM2 = randomUUID(), LAND = randomUUID(), DUP = randomUUID();
 
 // ---- Supabase-style shim ---------------------------------------------------------------------------------
@@ -62,8 +62,14 @@ await db.exec(file("0015_pickup.sql"));
 await db.exec(file("0015_pickup.sql")); // re-runnable
 await db.exec(file("0016_costs.sql"));
 await db.exec(file("0016_costs.sql")); // re-runnable
+await db.exec(file("0017_delivery.sql"));
+await db.exec(file("0017_delivery.sql")); // re-runnable
 await db.exec(file("0002_rls.sql"));               // re-running 0002 must not widen is_admin()
-await db.exec(`insert into public.admin_users (user_id, role) values ('${STAFF}', 'staff');`);
+await db.exec(`
+  insert into auth.users (id, email) values ('${COURIER}','courier@x.test'), ('${COURIER2}','courier2@x.test');
+  insert into public.admin_users (user_id, role) values ('${STAFF}', 'staff');
+  insert into public.admin_users (user_id, role, display_name, phone) values ('${COURIER}', 'courier', 'דני השליח', '0501234567'), ('${COURIER2}', 'courier', 'רוני', '0509876543');
+`);
 
 // ---- helpers -----------------------------------------------------------------------------------------------
 async function as(role, uid, sql, params) {
@@ -79,6 +85,8 @@ async function as(role, uid, sql, params) {
 const asOwner = (sql, p) => as("authenticated", OWNER, sql, p);
 const asStaff = (sql, p) => as("authenticated", STAFF, sql, p);
 const asPlain = (sql, p) => as("authenticated", PLAIN, sql, p);
+const asCourier = (sql, p) => as("authenticated", COURIER, sql, p);
+const asCourier2 = (sql, p) => as("authenticated", COURIER2, sql, p);
 const asAnon = (sql, p) => as("anon", null, sql, p);
 const asMem1 = (sql, p) => as("authenticated", MEM1, sql, p);
 const asMem2 = (sql, p) => as("authenticated", MEM2, sql, p);
@@ -291,13 +299,18 @@ const execFns = (await su(`
   where n.nspname = 'public' and has_function_privilege('authenticated', p.oid, 'execute') order by 1`));
 // Reviewed list (docs/CUSTOMER_PERMISSIONS_AUDIT.md). A NEW function showing up here fails the check on purpose:
 // someone has to decide whether a customer may call it.
-const PUBLIC_BY_DESIGN = ["get_storefront_catalog", "check_stock_availability", "get_business_settings", "create_order", "get_order_status"];
+const PUBLIC_BY_DESIGN = ["get_storefront_catalog", "check_stock_availability", "get_business_settings", "create_order", "get_order_status",
+  // 0017: one yes/no per window, never the capacity
+  "get_delivery_slots"];
 const GUARDED_ADMIN = ["is_admin", "is_staff", "get_my_role", "expire_stale_orders", "transition_order", "resolve_stock_return",
   "admin_reorder_categories", "admin_reorder_subcategories", "admin_reorder_products", "admin_product_counts",
   // owner's customer tools (0013): each re-checks is_admin() (owner only) inside itself
   "admin_customer_stats", "admin_list_customers", "admin_export_audience",
   // costs (0016): each re-checks is_admin() (owner only) inside itself
-  "admin_set_product_cost", "admin_cost_overview"];
+  "admin_set_product_cost", "admin_cost_overview",
+  // delivery (0017): each checks the caller's own role (courier / back-office) inside itself
+  "is_courier", "get_my_access", "courier_list_open_runs", "courier_my_runs", "claim_delivery_run", "release_delivery_run",
+  "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop"];
 // Member-facing (0012): each reads auth.uid() itself, returns only the caller's own data, and is revoked from anon.
 const MEMBER_RPCS = ["get_my_customer", "claim_guest_orders", "join_club", "get_my_orders", "set_marketing_consent", "delete_my_account",
   // coupons (0014): checks the caller's own membership itself, refuses everyone else; revoked from anon
@@ -970,6 +983,189 @@ check("nothing about costs, barcodes, suppliers, VAT or review notes reaches the
 check("VAT / low-margin settings are owner-only", ((await asStaff(`update public.business_settings set vat_percent=17 where id=1 returning 1`)).rows ?? []).length === 0
   && !(await asOwner(`update public.business_settings set vat_percent=120 where id=1`)).ok);
 await su(`update public.products set barcode=null, review_note=null where id='901'`);
+
+// ---- delivery windows, runs and the courier (migration 0017) -------------------------------------------------
+console.log("\nDelivery (0017)");
+await su(`update public.products set stock_base_units = 100 where id = '901'`);
+await su(`update public.business_settings set delivery_enabled = true, pickup_enabled = true, cash_enabled = true, min_order_cents = 0, delivery_advance_hours = 24 where id = 1`);
+const refusedTok = (r, tok) => !r.ok && String(r.error).includes(tok);
+const winOrder = async (windowId, { items, method = "cash", fulfillment = "delivery", street = "הרצל", house = "1" } = {}) => {
+  const payload = { items: items ?? [{ product_id: "902", option: "unit", quantity: 1 }], payment_method: method, fulfillment_method: fulfillment,
+    customer: { ...customer, street, house_number: house }, ...(windowId ? { delivery_window_id: windowId } : {}) };
+  const r = await asAnon(`select public.create_order($1::jsonb, $2::uuid) as o`, [JSON.stringify(payload), randomUUID()]);
+  return r.ok ? r.rows[0].o : r;
+};
+
+check("no windows yet: get_delivery_slots is empty and an order needs no window",
+  (await asAnon(`select public.get_delivery_slots() as s`)).rows[0].s.length === 0 && !!(await winOrder(null)).order_id);
+
+// roles
+const cr = (await asCourier(`select public.is_admin() a, public.is_staff() s, public.is_courier() c, public.get_my_role() r, public.get_my_access() x`)).rows[0];
+check("courier: not admin, NOT staff, is_courier, role courier", cr.a === false && cr.s === false && cr.c === true && cr.r === "courier" && cr.x.courier === true && cr.x.role === "courier");
+const stAcc = (await asStaff(`select public.get_my_access() x`)).rows[0].x;
+check("staff access: role staff, not a courier", stAcc.role === "staff" && stAcc.courier === false);
+const nEarly = await winOrder(null);
+check("a courier cannot move an order or read orders / order items / history",
+  !(await tr(asCourier, nEarly.order_id, "confirmed", "preparing")).ok
+  && ((await asCourier(`select 1 from public.orders`)).rows ?? []).length === 0
+  && ((await asCourier(`select 1 from public.order_items`)).rows ?? []).length === 0
+  && ((await asCourier(`select 1 from public.order_status_events`)).rows ?? []).length === 0
+  && !(await asCourier(`select public.resolve_stock_return('${nEarly.order_id}','returned')`)).ok);
+check("a courier has no table access to windows / runs / run events",
+  ((await asCourier(`select 1 from public.delivery_windows`)).rows ?? []).length === 0
+  && ((await asCourier(`select 1 from public.delivery_runs`)).rows ?? []).length === 0
+  && ((await asCourier(`select 1 from public.delivery_run_events`)).rows ?? []).length === 0);
+check("staff / customer / anonymous cannot use the courier screens",
+  refusedTok(await asStaff(`select public.courier_list_open_runs()`), "NOT_AUTHORIZED")
+  && !(await asPlain(`select public.courier_my_runs()`)).ok && !(await asAnon(`select public.courier_list_open_runs()`)).ok);
+await su(`update public.admin_users set can_courier = true where user_id = '${STAFF}'`);
+check("a staff account with can_courier may use them (one person, two jobs) and is still staff",
+  (await asStaff(`select public.courier_list_open_runs() as r`)).ok && (await asStaff(`select public.is_staff() s`)).rows[0].s === true);
+await su(`update public.admin_users set can_courier = false where user_id = '${STAFF}'`);
+check("transition_order and resolve_stock_return still refuse a courier-only account (any order)", !(await tr(asCourier, nEarly.order_id, "confirmed", "cancelled", "x")).ok);
+
+// windows table
+check("staff / customer cannot create or read windows; the owner can",
+  ((await asStaff(`select 1 from public.delivery_windows`)).rows ?? []).length === 0
+  && !(await asStaff(`insert into public.delivery_windows (departure_time, order_cutoff_time) values ('18:00','17:00')`)).ok
+  && !(await asAnon(`select 1 from public.delivery_windows`)).ok);
+check("a window cannot cut off after it departs; capacity must be positive",
+  !(await asOwner(`insert into public.delivery_windows (departure_time, order_cutoff_time) values ('17:00','18:00')`)).ok
+  && !(await asOwner(`insert into public.delivery_windows (departure_time, order_cutoff_time, capacity) values ('18:00','17:00', 0)`)).ok);
+const mkWin = async (dep, cut, cap = null, active = true) =>
+  (await asOwner(`insert into public.delivery_windows (departure_time, order_cutoff_time, capacity, is_active) values ($1,$2,$3,$4) returning id`, [dep, cut, cap, active])).rows[0].id;
+const W1 = await mkWin("23:59:59", "23:59:58", 2);   // open all day, capacity 2
+const Wclosed = await mkWin("00:00:02", "00:00:01"); // already past cut-off
+const Woff = await mkWin("23:59:59", "23:59:58", null, false);
+
+// create_order rules
+check("with a window defined, a delivery order needs one", refusedTok(await winOrder(null), "WINDOW_REQUIRED"));
+check("an unknown / invalid window is refused", refusedTok(await winOrder(randomUUID()), "WINDOW_UNAVAILABLE") && refusedTok(await winOrder("not-a-uuid"), "WINDOW_UNAVAILABLE"));
+check("an inactive window and a window past its cut-off are refused", refusedTok(await winOrder(Woff), "WINDOW_UNAVAILABLE") && refusedTok(await winOrder(Wclosed), "WINDOW_UNAVAILABLE"));
+const pk = await winOrder(null, { fulfillment: "pickup" });
+check("a pickup order never needs a window", !!pk.order_id && (await order(pk.order_id)).delivery_window_id === null);
+const stNow = (await su(`select (now() at time zone 'Asia/Jerusalem')::time < '22:00' as early`))[0].early;
+if (stNow) {
+  await su(`update public.business_settings set delivery_advance_hours = 1 where id = 1`);
+  check("a window further away than delivery_advance_hours is refused", refusedTok(await winOrder(W1), "WINDOW_UNAVAILABLE"));
+  await su(`update public.business_settings set delivery_advance_hours = 24 where id = 1`);
+} else console.log("  (skipped: 'too far ahead' check needs Israel time before 22:00)");
+const A = await winOrder(W1, { street: "הרצל", house: "12" }), B = await winOrder(W1, { street: "אילת", house: "3" });
+check("two orders fit the capacity-2 window; the snapshot of the departure time is kept",
+  !!A.order_id && !!B.order_id && (await order(A.order_id)).delivery_departure_time === "23:59:59" && (await order(A.order_id)).delivery_date !== null);
+check("the third is WINDOW_FULL", refusedTok(await winOrder(W1), "WINDOW_FULL"));
+const slots = (await asAnon(`select public.get_delivery_slots() as s`)).rows[0].s;
+check("get_delivery_slots: full window is unavailable and no capacity / order count is exposed",
+  slots.find((s) => s.id === W1)?.available === false && !JSON.stringify(slots).includes("capacity") && slots.every((s) => s.id !== Woff));
+const pubWin = JSON.stringify((await asAnon(`select public.get_business_settings() as s`)).rows[0].s);
+check("get_business_settings lists the active windows (no capacity) and the advance hours",
+  pubWin.includes(W1) && !pubWin.includes(Woff) && !pubWin.includes("capacity") && pubWin.includes("delivery_advance_hours"));
+await tr(asOwner, B.order_id, "confirmed", "cancelled", "בדיקה");
+check("a cancelled order frees its seat", (await winOrder(W1)).order_id !== undefined);
+
+// lifecycle
+const isoStatus = async (id) => (await order(id)).order_status;
+await tr(asStaff, A.order_id, "confirmed", "preparing");
+check("a windowed order cannot skip ready_for_dispatch", refusedTok(await tr(asStaff, A.order_id, "preparing", "out_for_delivery"), "INVALID_TRANSITION"));
+check("no run exists before anything is ready", (await su(`select count(*)::int n from public.delivery_runs`))[0].n === 0);
+check("staff marks A ready_for_dispatch -> a run is created and A joins it",
+  (await tr(asStaff, A.order_id, "preparing", "ready_for_dispatch")).ok
+  && (await su(`select count(*)::int n from public.delivery_runs where status='open'`))[0].n === 1 && (await order(A.order_id)).delivery_run_id !== null);
+const runId = (await order(A.order_id)).delivery_run_id;
+// C = a second windowed order (cash) readied into the same run
+let Cid = null;
+{
+  await asOwner(`update public.delivery_windows set capacity = null where id = '${W1}'`);
+  const c = await winOrder(W1, { street: "בן גוריון", house: "7", items: [{ product_id: "901", option: "unit", quantity: 2 }] });
+  Cid = c.order_id;
+  await tr(asStaff, Cid, "confirmed", "preparing");
+  await tr(asStaff, Cid, "preparing", "ready_for_dispatch");
+}
+check("a second ready order joins the SAME run", (await order(Cid)).delivery_run_id === runId
+  && (await su(`select count(*)::int n from public.delivery_runs`))[0].n === 1);
+const openList = await asCourier(`select public.courier_list_open_runs() as r`);
+const openJson = JSON.stringify(openList.rows?.[0]?.r);
+check("open runs list: slot, order count and streets — and NO customer details",
+  openList.ok && openList.rows[0].r.length === 1 && openList.rows[0].r[0].order_count === 2
+  && openJson.includes("הרצל") && !openJson.includes("050-123-4567") && !openJson.includes("first_name") && !openJson.includes("house_number"));
+check("a courier cannot read a run's stops before claiming it (not in courier_my_runs)", (await asCourier(`select public.courier_my_runs() as r`)).rows[0].r.length === 0);
+check("courier 1 takes the run; courier 2 is told it is taken", (await asCourier(`select public.claim_delivery_run('${runId}') as r`)).ok
+  && refusedTok(await asCourier2(`select public.claim_delivery_run('${runId}')`), "ALREADY_CLAIMED"));
+check("claiming again is harmless for the same courier", (await asCourier(`select public.claim_delivery_run('${runId}') as r`)).rows[0].r.changed === false);
+const runRow = (await asStaff(`select * from public.delivery_runs where id='${runId}'`)).rows[0];
+check("the run shows who took it (name + phone) to back-office", runRow.status === "claimed" && runRow.courier_name === "דני השליח" && runRow.courier_phone === "0501234567" && runRow.claimed_at !== null);
+check("the claimed run leaves the open list; courier 2 sees nothing of it", (await asCourier2(`select public.courier_list_open_runs() as r`)).rows[0].r.length === 0
+  && (await asCourier2(`select public.courier_my_runs() as r`)).rows[0].r.length === 0);
+const mine17 = (await asCourier(`select public.courier_my_runs() as r`)).rows[0].r;
+check("the claimer sees the stops with details, sorted by street",
+  mine17.length === 1 && mine17[0].stops.length === 2 && mine17[0].stops[0].street === "בן גוריון" && mine17[0].stops[1].street === "הרצל" && mine17[0].stops[1].phone === "050-123-4567");
+check("courier 2 cannot release / depart another courier's run", refusedTok(await asCourier2(`select public.release_delivery_run('${runId}')`), "NOT_AUTHORIZED")
+  && refusedTok(await asCourier2(`select public.depart_delivery_run('${runId}')`), "NOT_AUTHORIZED"));
+check("the owner releases a courier who did not show up -> the run is open again, history kept",
+  (await asOwner(`select public.release_delivery_run('${runId}') as r`)).ok
+  && (await su(`select status, courier_id from public.delivery_runs where id='${runId}'`))[0].status === "open"
+  && (await su(`select count(*)::int n from public.delivery_run_events where run_id='${runId}' and kind in ('claimed','released')`))[0].n === 2);
+await asCourier2(`select public.claim_delivery_run('${runId}')`);
+check("staff can release too; then courier 1 takes it again", (await asStaff(`select public.release_delivery_run('${runId}')`)).ok && (await asCourier(`select public.claim_delivery_run('${runId}')`)).ok);
+check("staff cannot depart an order of a run through transition_order (USE_DELIVERY_RUN)", refusedTok(await tr(asStaff, A.order_id, "ready_for_dispatch", "out_for_delivery"), "USE_DELIVERY_RUN"));
+const stockBeforeDepart = await stock("901");
+check("courier 1 departs -> every ready order is out_for_delivery, the run is departed",
+  (await asCourier(`select public.depart_delivery_run('${runId}') as r`)).rows[0].r.orders === 2
+  && (await isoStatus(A.order_id)) === "out_for_delivery" && (await isoStatus(Cid)) === "out_for_delivery"
+  && (await su(`select status from public.delivery_runs where id='${runId}'`))[0].status === "departed");
+check("departing took the courier's name in the order history", (await su(`select actor_label, actor_role from public.order_status_events where order_id='${A.order_id}' and to_value='out_for_delivery'`))[0].actor_role === "courier");
+// a late order: ready after departure -> a NEW run
+const D = await winOrder(W1, { street: "הרצל", house: "9" });
+await tr(asStaff, D.order_id, "confirmed", "preparing");
+await tr(asStaff, D.order_id, "preparing", "ready_for_dispatch");
+const runD = (await order(D.order_id)).delivery_run_id;
+check("an order ready after the run left gets a NEW open run", runD && runD !== runId && (await su(`select status from public.delivery_runs where id='${runD}'`))[0].status === "open");
+// stops
+check("complete needs the ID check", refusedTok(await asCourier(`select public.complete_delivery_stop('${A.order_id}', false)`), "ID_CHECK_REQUIRED"));
+check("courier 2 cannot complete somebody else's stop", refusedTok(await asCourier2(`select public.complete_delivery_stop('${A.order_id}', true)`), "NOT_AUTHORIZED"));
+check("courier 1 completes A (cash -> paid)", (await asCourier(`select public.complete_delivery_stop('${A.order_id}', true)`)).ok
+  && (await isoStatus(A.order_id)) === "completed" && (await order(A.order_id)).payment_status === "paid");
+check("completing twice is a no-op", (await asCourier(`select public.complete_delivery_stop('${A.order_id}', true) as r`)).rows[0].r.changed === false);
+check("fail needs a reason", refusedTok(await asCourier(`select public.fail_delivery_stop('${Cid}', '  ')`), "REASON_REQUIRED"));
+const stockBeforeFail = await stock("901");
+check("courier fails stop C -> delivery_failed, stock still OUT, waiting for confirmation",
+  (await asCourier(`select public.fail_delivery_stop('${Cid}', 'אין תעודה')`)).ok
+  && (await isoStatus(Cid)) === "delivery_failed" && (await order(Cid)).stock_return_status === "pending_return" && (await stock("901")) === stockBeforeFail
+  && (await order(Cid)).delivery_failed_reason === "אין תעודה");
+check("the failure reason is in the order history", (await su(`select reason from public.order_status_events where order_id='${Cid}' and to_value='delivery_failed'`))[0].reason === "אין תעודה");
+check("the run is finished once nothing is left on the road", (await su(`select status from public.delivery_runs where id='${runId}'`))[0].status === "finished");
+const finishedMine = (await asCourier(`select public.courier_my_runs() as r`)).rows[0].r;
+check("a run finished today stays on the courier's screen with its outcomes; another courier never sees it",
+  finishedMine.length === 1 && finishedMine[0].status === "finished" && finishedMine[0].stops.map((s) => s.order_status).sort().join() === "completed,delivery_failed"
+  && (await asCourier2(`select public.courier_my_runs() as r`)).rows[0].r.length === 0);
+check("a courier cannot confirm the return; staff can -> stock back, status stays delivery_failed",
+  !(await asCourier(`select public.resolve_stock_return('${Cid}','returned')`)).ok
+  && (await asStaff(`select public.resolve_stock_return('${Cid}','returned')`)).ok
+  && (await stock("901")) === stockBeforeFail + 2 && (await isoStatus(Cid)) === "delivery_failed" && (await order(Cid)).stock_return_status === "restored");
+check("delivery_failed is final (no transition out of it)", refusedTok(await tr(asOwner, Cid, "delivery_failed", "preparing"), "INVALID_TRANSITION"));
+// cancel / back out of a run
+const stockE = await stock("901");
+const E = await winOrder(W1, { street: "הרצל", house: "2", items: [{ product_id: "901", option: "unit", quantity: 3 }] });
+await tr(asStaff, E.order_id, "confirmed", "preparing");
+await tr(asStaff, E.order_id, "preparing", "ready_for_dispatch");
+check("cancel while ready_for_dispatch restores stock at once, leaves the run, drops the empty run's seat",
+  (await stock("901")) === stockE - 3 && (await tr(asStaff, E.order_id, "ready_for_dispatch", "cancelled", "בדיקה")).ok
+  && (await stock("901")) === stockE && (await order(E.order_id)).delivery_run_id === null && (await order(E.order_id)).stock_return_status === "restored");
+check("D is alone in its open run; taking it back to preparing removes the (now empty) run",
+  (await tr(asStaff, D.order_id, "ready_for_dispatch", "preparing")).ok
+  && (await su(`select count(*)::int n from public.delivery_runs where id='${runD}'`))[0].n === 0 && (await order(D.order_id)).delivery_run_id === null);
+check("an order may go back to ready_for_dispatch (a new run again)", (await tr(asStaff, D.order_id, "preparing", "ready_for_dispatch")).ok && (await order(D.order_id)).delivery_run_id !== null);
+// public tracking
+const st17 = (await asAnon(`select public.get_order_status('${A.order_id}') as s`)).rows[0].s;
+check("get_order_status: departure time added, still no personal data",
+  st17.delivery_departure_time === "23:59:59" && !JSON.stringify(st17).includes("050") && !JSON.stringify(st17).includes("הרצל"));
+// legacy: delivery order without a window keeps the old lifecycle
+await asOwner(`update public.delivery_windows set is_active = false`);
+const L = await winOrder(null);
+check("with every window switched off, delivery works as before (no window, preparing -> out_for_delivery -> completed)",
+  !!L.order_id && (await tr(asStaff, L.order_id, "confirmed", "preparing")).ok && (await tr(asStaff, L.order_id, "preparing", "out_for_delivery")).ok
+  && (await tr(asStaff, L.order_id, "out_for_delivery", "completed")).ok);
+check("the owner cannot delete a window that already has runs", !(await asOwner(`delete from public.delivery_windows where id='${W1}'`)).ok);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

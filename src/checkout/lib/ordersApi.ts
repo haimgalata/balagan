@@ -23,6 +23,8 @@ export interface OrderItemPayload {
 export interface OrderCustomerPayload {
   /** Pickup orders carry no address (the database ignores one if sent). Missing = delivery, as before migration 0015. */
   fulfillmentMethod?: FulfillmentMethod;
+  /** Delivery only, and only once the owner has defined windows (migration 0017): the departure slot the customer chose. */
+  deliveryWindowId?: string | null;
   firstName: string;
   lastName: string;
   phone: string;
@@ -68,6 +70,7 @@ function toRpcPayload(items: OrderItemPayload[], paymentMethod: PaymentMethod, c
   const pickup = customer.fulfillmentMethod === "pickup";
   return {
     fulfillment_method: pickup ? "pickup" : "delivery",
+    ...(!pickup && customer.deliveryWindowId ? { delivery_window_id: customer.deliveryWindowId } : {}),
     // only the CODE is sent: the database validates it for the caller's own identity and prices it itself
     ...(couponCode ? { coupon_code: couponCode } : {}),
     items: items.map((item) => ({ product_id: item.productId, option: item.option, quantity: item.quantity })),
@@ -205,6 +208,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   ORDERS_CLOSED: "ההזמנות באתר סגורות כרגע. אפשר לנסות שוב בשעות ההזמנה.",
   FULFILLMENT_UNAVAILABLE: "אופן קבלת ההזמנה השתנה בינתיים. רעננו את הדף ונסו שוב.",
   PAYMENT_METHOD_UNAVAILABLE: "אופן התשלום שנבחר אינו זמין כרגע. רעננו את הדף ונסו שוב.",
+  WINDOW_REQUIRED: "יש לבחור חלון משלוח.",
+  WINDOW_UNAVAILABLE: "חלון המשלוח שנבחר כבר אינו זמין (ההזמנה אליו נסגרה). אפשר לבחור חלון אחר.",
+  WINDOW_FULL: "חלון המשלוח שנבחר התמלא. אפשר לבחור חלון אחר.",
 };
 
 /** Hebrew message for an order-creation failure; falls back to a generic retry message for anything not

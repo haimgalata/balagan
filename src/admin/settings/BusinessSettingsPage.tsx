@@ -2,7 +2,26 @@ import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
-import { updateBusinessHourDay, updateBusinessSettings, type BusinessHourRow, type BusinessSettingsRow } from "@/admin/settings/settingsApi";
+import {
+  addDeliveryWindow,
+  deleteDeliveryWindow,
+  updateBusinessHourDay,
+  updateBusinessSettings,
+  updateDeliveryWindow,
+  type BusinessHourRow,
+  type BusinessSettingsRow,
+  type DeliveryWindowRow,
+} from "@/admin/settings/settingsApi";
+import {
+  ADVANCE_HOURS_MAX,
+  ADVANCE_HOURS_MIN,
+  newWindowDraft,
+  parseAdvanceHours,
+  toWindowDrafts,
+  toWindowFields,
+  validateWindows,
+  type WindowDraft,
+} from "@/admin/settings/deliveryWindowsModel";
 import { useBusinessSettingsManager, type Feedback } from "@/admin/settings/useBusinessSettingsManager";
 
 const DAY_NAMES = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -244,6 +263,128 @@ function FulfillmentSection({ client, initialSettings, busy, run }: { client: Su
   );
 }
 
+/**
+ * Delivery windows (migration 0017): the departure slots customers pick at checkout. A window takes orders until its
+ * cut-off time, for at most "N hours ahead" of its departure, and — if a capacity is set — until that many orders are in.
+ * With no window defined, delivery works as before (no choice at checkout). The database enforces all of it.
+ */
+function DeliveryWindowsSection({
+  client,
+  windows,
+  initialSettings,
+  busy,
+  run,
+}: {
+  client: SupabaseClient;
+  windows: DeliveryWindowRow[] | null;
+  initialSettings: BusinessSettingsRow;
+  busy: boolean;
+  run: Run;
+}) {
+  const [drafts, setDrafts] = useState<WindowDraft[]>(() => toWindowDrafts(windows ?? []));
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [advance, setAdvance] = useState(() => String(initialSettings.delivery_advance_hours ?? 4));
+  const [error, setError] = useState<string | null>(null);
+
+  if (windows === null || initialSettings.delivery_advance_hours === undefined) {
+    return (
+      <fieldset className="flex flex-col gap-2 rounded-lg border border-brand-border bg-brand-bg-elevated p-4">
+        <legend className="px-1 text-base font-semibold text-brand-text">חלונות משלוח</legend>
+        <p role="alert" className="text-sm text-brand-danger">
+          יש להריץ את supabase/migrations/0017_delivery.sql במסד הנתונים כדי להגדיר חלונות משלוח.
+        </p>
+      </fieldset>
+    );
+  }
+
+  const patch = (key: string, fields: Partial<WindowDraft>) => setDrafts((previous) => previous.map((d) => (d.key === key ? { ...d, ...fields } : d)));
+  const remove = (draft: WindowDraft) => {
+    setDrafts((previous) => previous.filter((d) => d.key !== draft.key));
+    if (draft.id) setRemoved((previous) => [...previous, draft.id as string]);
+  };
+
+  const save = async () => {
+    const problem = validateWindows(drafts, advance);
+    setError(problem);
+    if (problem) return;
+    await run(async () => {
+      for (const id of removed) {
+        const result = await deleteDeliveryWindow(client, id);
+        if (!result.ok) return result;
+      }
+      for (const draft of drafts) {
+        const result = draft.id ? await updateDeliveryWindow(client, draft.id, toWindowFields(draft)) : await addDeliveryWindow(client, toWindowFields(draft));
+        if (!result.ok) return result;
+      }
+      return updateBusinessSettings(client, { delivery_advance_hours: parseAdvanceHours(advance) ?? 4 });
+    }, "חלונות המשלוח נשמרו");
+    setRemoved([]);
+  };
+
+  return (
+    <fieldset className="flex flex-col gap-3 rounded-lg border border-brand-border bg-brand-bg-elevated p-4" data-testid="delivery-windows-settings">
+      <legend className="px-1 text-base font-semibold text-brand-text">חלונות משלוח</legend>
+      <p className="text-xs text-brand-text-muted">
+        שעת היציאה היא מתי השליח יוצא עם כל ההזמנות של החלון. הלקוח יכול להזמין לחלון עד שעת הסגירה שלו. קיבולת ריקה = ללא הגבלה. בלי חלונות כלל, המשלוח
+        עובד כרגיל וללא בחירה בצ׳קאאוט.
+      </p>
+
+      {drafts.length === 0 && <p className="rounded-md border border-dashed border-brand-border p-3 text-center text-sm text-brand-text-muted">עדיין לא הוגדרו חלונות.</p>}
+
+      <div className="flex flex-col gap-3">
+        {drafts.map((d, index) => (
+          <div key={d.key} data-testid="window-row" className="flex flex-wrap items-end gap-3 rounded-md border border-brand-border p-3">
+            <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+              שעת יציאה
+              <input type="time" dir="ltr" aria-label={`חלון ${index + 1} — שעת יציאה`} value={d.departure} disabled={busy} onChange={(e) => patch(d.key, { departure: e.target.value })} className={`${inputClasses} w-[7.5rem]`} />
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+              סגירה להזמנה עד
+              <input type="time" dir="ltr" aria-label={`חלון ${index + 1} — סגירה להזמנה`} value={d.cutoff} disabled={busy} onChange={(e) => patch(d.key, { cutoff: e.target.value })} className={`${inputClasses} w-[7.5rem]`} />
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+              קיבולת (אופציונלי)
+              <input type="text" inputMode="numeric" dir="ltr" aria-label={`חלון ${index + 1} — קיבולת`} value={d.capacity} disabled={busy} onChange={(e) => patch(d.key, { capacity: e.target.value })} className={`${inputClasses} w-24`} />
+            </label>
+            <label className="flex items-center gap-2 pb-2 text-sm text-brand-text">
+              <input type="checkbox" checked={d.active} disabled={busy} onChange={(e) => patch(d.key, { active: e.target.checked })} className="h-4 w-4 accent-[rgb(var(--color-gold))]" />
+              פעיל
+            </label>
+            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => remove(d)} className="text-brand-danger">
+              מחיקה
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <Button type="button" variant="secondary" disabled={busy} onClick={() => setDrafts((previous) => [...previous, newWindowDraft()])} className="self-start">
+        הוספת חלון
+      </Button>
+
+      <label className="flex flex-col gap-1.5 text-sm text-brand-text">
+        כמה שעות מראש אפשר להזמין לחלון ({ADVANCE_HOURS_MIN}–{ADVANCE_HOURS_MAX})
+        <input type="text" inputMode="numeric" dir="ltr" value={advance} disabled={busy} onChange={(e) => setAdvance(e.target.value)} className={`${inputClasses} w-24`} />
+      </label>
+
+      {error && (
+        <p role="alert" className="text-xs text-brand-danger">
+          {error}
+        </p>
+      )}
+      <Button onClick={() => void save()} disabled={busy} className="self-start">
+        {busy ? (
+          <>
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            שומר…
+          </>
+        ) : (
+          "שמירה"
+        )}
+      </Button>
+    </fieldset>
+  );
+}
+
 /** VAT and the "low margin" line used by the owner's costs screen (migration 0016). Not shown to customers. */
 function CostsSection({ client, initialSettings, busy, run }: { client: SupabaseClient; initialSettings: BusinessSettingsRow; busy: boolean; run: Run }) {
   const [vat, setVat] = useState(() => String(initialSettings.vat_percent ?? 18));
@@ -434,6 +575,7 @@ export function BusinessSettingsPage({ client }: { client: SupabaseClient }) {
             busy={busy}
             run={run}
           />
+          <DeliveryWindowsSection key={`windows-${JSON.stringify(data.windows)}-${data.settings.delivery_advance_hours ?? "x"}`} client={client} windows={data.windows} initialSettings={data.settings} busy={busy} run={run} />
           <FulfillmentSection client={client} initialSettings={data.settings} busy={busy} run={run} />
           <CostsSection client={client} initialSettings={data.settings} busy={busy} run={run} />
         </div>

@@ -29,6 +29,14 @@ export interface RpcBusinessSettings {
   cash_enabled?: boolean;
   card_enabled?: boolean;
   store_address_text?: string | null;
+  // Migration 0017 — delivery windows (departure slots). Absent from an older database or cached copy = no windows.
+  delivery_advance_hours?: number;
+  delivery_windows?: RpcDeliveryWindow[];
+}
+export interface RpcDeliveryWindow {
+  id: string;
+  departure_time: string; // "HH:MM:SS"
+  order_cutoff_time: string;
 }
 
 // ---------------------------------------------------------------- validation
@@ -54,6 +62,16 @@ export function parseRpcBusinessSettings(value: unknown): RpcBusinessSettings | 
     if (value[key] !== undefined && typeof value[key] !== "boolean") return null;
   }
   if (value.store_address_text !== undefined && !isStrOrNull(value.store_address_text)) return null;
+  if (value.delivery_advance_hours !== undefined && !isNum(value.delivery_advance_hours)) return null;
+  if (
+    value.delivery_windows !== undefined &&
+    !(
+      Array.isArray(value.delivery_windows) &&
+      value.delivery_windows.every((w) => isObj(w) && typeof w.id === "string" && typeof w.departure_time === "string" && typeof w.order_cutoff_time === "string")
+    )
+  ) {
+    return null;
+  }
   return value as unknown as RpcBusinessSettings;
 }
 

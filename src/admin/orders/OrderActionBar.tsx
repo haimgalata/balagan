@@ -4,7 +4,7 @@ import { Button } from "@/shared/ui/Button";
 import type { AdminRole } from "@/admin/useAdminSession";
 import { CancelOrderDialog } from "@/admin/orders/CancelOrderDialog";
 import type { OrderActions } from "@/admin/orders/useOrderActions";
-import { advanceAction, backAction, canCancel, needsStockReturn, type OrderRow } from "@/admin/orders/orderModel";
+import { advanceAction, backAction, canCancel, deliveryContext, needsStockReturn, type OrderRow } from "@/admin/orders/orderModel";
 
 interface OrderActionBarProps {
   order: OrderRow;
@@ -33,7 +33,7 @@ export function OrderActionBar({ order, role, actions, size = "md", onMoved }: O
   }, [armedComplete]);
   const busy = actions.busyId === order.id;
   const fulfillment = order.fulfillment_method ?? "delivery";
-  const advance = advanceAction(order.order_status, fulfillment);
+  const advance = advanceAction(order.order_status, fulfillment, deliveryContext(order));
   const back = backAction(order.order_status, role, fulfillment);
 
   const run = async (to: Parameters<typeof actions.move>[1], reason?: string) => {

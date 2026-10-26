@@ -20,13 +20,17 @@ export interface StubUser {
   /** what is_admin() answers for this user (the real one reads the admin_users allow-list) */
   isAdmin: boolean;
   /** what get_my_role() answers; defaults to 'owner' when isAdmin, otherwise null (not in the allow-list) */
-  role?: "owner" | "staff" | null;
+  role?: "owner" | "staff" | "courier" | null;
+  /** an owner/staff account that also drives delivery runs (admin_users.can_courier, migration 0017) */
+  canCourier?: boolean;
 }
 
 export const ADMIN_USER: StubUser = { email: "owner@example.test", password: "correct-horse-battery", id: "00000000-0000-0000-0000-00000000000a", isAdmin: true };
 /** The shared order-terminal account: in the allow-list as 'staff' — is_admin() (owner-only) is false for it. */
 export const STAFF_USER: StubUser = { email: "terminal@example.test", password: "terminal-password-1", id: "00000000-0000-0000-0000-00000000000c", isAdmin: false, role: "staff" };
-export const roleOf = (user: StubUser): "owner" | "staff" | null => user.role !== undefined ? user.role : user.isAdmin ? "owner" : null;
+/** A delivery person: in the allow-list as 'courier' (migration 0017) — not staff, not owner. */
+export const COURIER_USER: StubUser = { email: "courier@example.test", password: "courier-password-1", id: "00000000-0000-0000-0000-00000000000d", isAdmin: false, role: "courier" };
+export const roleOf = (user: StubUser): "owner" | "staff" | "courier" | null => user.role !== undefined ? user.role : user.isAdmin ? "owner" : null;
 export const PLAIN_USER: StubUser = { email: "someone@example.test", password: "another-password-1", id: "00000000-0000-0000-0000-00000000000b", isAdmin: false };
 
 export interface StubOptions {
@@ -157,6 +161,14 @@ export async function stubSupabase(page: Page, options: StubOptions = {}) {
       const user = byId(sub);
       if (!user) return json(route, 401, { code: "42501", message: "permission denied for function get_my_role" });
       return json(route, 200, roleOf(user));
+    }
+
+    // ---- get_my_access(): role + whether the account also drives delivery runs (migration 0017)
+    if (url.pathname === "/rest/v1/rpc/get_my_access") {
+      const user = byId(sub);
+      if (!user) return json(route, 401, { code: "42501", message: "permission denied for function get_my_access" });
+      const role = roleOf(user);
+      return json(route, 200, { role, courier: role === "courier" || user.canCourier === true });
     }
 
     // ---- is_admin()

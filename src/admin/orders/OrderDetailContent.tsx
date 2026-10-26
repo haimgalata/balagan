@@ -12,6 +12,7 @@ import {
   STOCK_RETURN_LABEL,
   addressDetails,
   addressLine,
+  departureLabel,
   isPickup,
   statusLabel,
   formatDateTime,
@@ -41,7 +42,7 @@ export const StatusBadge = ({ status, fulfillment }: { status: OrderStatus; fulf
   const tone =
     status === "confirmed" ? "bg-brand-gold/20 text-brand-gold"
     : status === "completed" || status === "ready_for_pickup" ? "bg-brand-success/20 text-brand-success"
-    : status === "cancelled" || status === "expired" ? "bg-brand-danger/20 text-brand-danger"
+    : status === "cancelled" || status === "expired" || status === "delivery_failed" ? "bg-brand-danger/20 text-brand-danger"
     : "bg-brand-bg text-brand-text";
   return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}>{statusLabel(status, fulfillment)}</span>;
 };
@@ -122,7 +123,16 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
         <h3 className="text-xl font-bold">#{order.order_number}</h3>
         <StatusBadge status={order.order_status} fulfillment={order.fulfillment_method} />
         <span className="text-sm text-brand-text-muted">{formatDateTime(order.created_at)}</span>
+        {departureLabel(order) && <span className="rounded-full border border-brand-border px-2.5 py-0.5 text-xs text-brand-text">{departureLabel(order)}</span>}
       </header>
+
+      {order.order_status === "delivery_failed" && (
+        <p className="rounded-md border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
+          המשלוח לא נמסר: {order.delivery_failed_reason}
+          {order.stock_return_status !== "none" && <span className="block text-xs">{STOCK_RETURN_LABEL[order.stock_return_status]}</span>}
+          {order.payment_status === "paid" && <span className="block text-xs">שולם בכרטיס אשראי — החזר כספי נעשה ידנית דרך ספק הסליקה.</span>}
+        </p>
+      )}
 
       {order.order_status === "cancelled" && (
         <p className="rounded-md border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">

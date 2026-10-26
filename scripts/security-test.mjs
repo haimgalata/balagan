@@ -41,6 +41,7 @@
  *   $env:ADMIN_EMAIL="..."; $env:ADMIN_PASSWORD="..."
  *   $env:USER_EMAIL="..."; $env:USER_PASSWORD="..."      # a normal user that is NOT in admin_users
  *   $env:STAFF_EMAIL="..."; $env:STAFF_PASSWORD="..."    # (optional, migration 0010) a user in admin_users with role 'staff'
+ *   $env:COURIER_EMAIL="..."; $env:COURIER_PASSWORD="..." # (optional, migration 0017) a user in admin_users with role 'courier'
  *   $env:MEMBER_EMAIL="..."; $env:MEMBER_PASSWORD="..."  # (optional, migrations 0011-0013) a DEDICATED test user for the club-member lifecycle:
  *                                                         #   not in admin_users, with a verified Israeli mobile number set on auth.users, e.g. in the
  *                                                         #   SQL editor: update auth.users set phone='9725XXXXXXXX', phone_confirmed_at=now() where email='...';
@@ -74,6 +75,7 @@ const ANON = env("SUPABASE_ANON_KEY");
 const ADMIN_EMAIL = env("ADMIN_EMAIL"), ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
 const USER_EMAIL = env("USER_EMAIL"), USER_PASSWORD = process.env.USER_PASSWORD ?? "";
 const STAFF_EMAIL = env("STAFF_EMAIL"), STAFF_PASSWORD = process.env.STAFF_PASSWORD ?? "";
+const COURIER_EMAIL = env("COURIER_EMAIL"), COURIER_PASSWORD = process.env.COURIER_PASSWORD ?? "";
 const MEMBER_EMAIL = env("MEMBER_EMAIL"), MEMBER_PASSWORD = process.env.MEMBER_PASSWORD ?? "";
 const CHECK_SIGNUP = process.argv.includes("--check-signup");
 const SIGNUPS_ENABLED = process.argv.includes("--signups-enabled");
@@ -145,13 +147,17 @@ const PRIVATE_KEYS = /"(barcode|stock_base_units|track_stock|unit_available|pack
 /** order snapshot fields that must NEVER appear in get_order_status()'s narrow response. */
 const ORDER_PII_KEYS = /"(first_name|last_name|phone|email|street|house_number|entrance|floor|apartment|intercom_code|delivery_notes|customer_id|idempotency_key)"\s*:/;
 
-let adminToken = "", userToken = "", userId = "", staffToken = "";
+let adminToken = "", userToken = "", userId = "", staffToken = "", courierToken = "";
 const orderIds = []; // probe orders created during the run (order_items/payment_attempts/payment_events cascade-delete with them)
 // Migration 0015 refuses orders outside the 'orders' schedule / while paused, and per disabled method. The probe orders
 // below must work at any hour, so while the test runs ordering is opened (all methods on, today's order hours
 // 00:00-23:59, pause off) and EXACTLY the original values are put back in cleanup(). The live site therefore accepts
 // orders around the clock for the minute or so the test takes — run it when that is acceptable.
 let ordersOpenedFor0015 = null;
+// Migration 0017: once the owner has defined delivery windows a delivery order must pick one (and may be refused by cut-off /
+// capacity). The probe orders carry no window, so every active window is switched off for the run and exactly these ids are
+// switched back on in cleanup().
+let windowsPausedFor0017 = [];
 const created = { product: false, product2: false, productOrder: false, sub: false, cat: false, otherCat: false, otherSub: false, image: false };
 
 async function cleanup() {
@@ -165,6 +171,11 @@ async function cleanup() {
     res.push(["ordering settings restored (0015)", s1.status < 300 && s2.status < 300]);
     if (s1.status >= 300 || s2.status >= 300) console.log(`  RESTORE BY HAND in /admin/settings: ${JSON.stringify(ordersOpenedFor0015)}`);
   }
+  if (windowsPausedFor0017.length) {
+    const w = await rest("PATCH", `delivery_windows?id=in.(${windowsPausedFor0017.join(",")})`, { token: adminToken, body: { is_active: true } });
+    res.push(["delivery windows switched back on (0017)", w.status < 300]);
+    if (w.status >= 300) console.log(`  SWITCH THESE WINDOWS BACK ON by hand in /admin/settings: ${windowsPausedFor0017.join(", ")}`);
+  }
   // orders first (order_items/payment_attempts/payment_events cascade with them) — deleted before the
   // products they reference, even though order_items.product_id would only be SET NULL, not blocked.
   // Since migration 0010 NOBODY can delete an order through the API (orders are history). On a project that
@@ -172,7 +183,7 @@ async function cleanup() {
   // goes back); whatever remains is listed below for removal in the SQL editor.
   if (orderIds.length) {
     await rest("DELETE", `orders?id=in.(${orderIds.join(",")})`, { token: adminToken });
-    const open = await rest("GET", `orders?id=in.(${orderIds.join(",")})&order_status=in.(confirmed,preparing,out_for_delivery,ready_for_pickup)&select=id,order_status`, { token: adminToken });
+    const open = await rest("GET", `orders?id=in.(${orderIds.join(",")})&order_status=in.(confirmed,preparing,ready_for_dispatch,out_for_delivery,ready_for_pickup)&select=id,order_status`, { token: adminToken });
     for (const o of open.json ?? []) await rpc("transition_order", adminToken, { p_order_id: o.id, p_expected_status: o.order_status, p_to_status: "cancelled", p_reason: "zz-security-probe cleanup" });
   }
   if (created.image) res.push(["storage object", (await call("DELETE", `${URL_}/storage/v1/object/product-images`, { token: adminToken, body: { prefixes: [IMG] } })).status < 300]);
@@ -535,6 +546,72 @@ async function costChecks() {
 }
 
 /**
+ * Part 2d — delivery windows and the courier (migration 0017). Windows are the owner's; runs are read by back office only; a
+ * courier has no table access at all and only the courier_* RPCs, which show customer details solely for a run he claimed.
+ * Needs COURIER_EMAIL / COURIER_PASSWORD (a user inserted into admin_users with role 'courier') for the courier half.
+ */
+async function deliveryChecks() {
+  let r = await rest("GET", "delivery_windows?select=id&limit=1", { token: adminToken });
+  if (r.status === 404 || pgCode(r) === "PGRST205" || pgCode(r) === "42P01") {
+    skipped.push("delivery (apply supabase/migrations/0017_delivery.sql, then re-run)");
+    section("Delivery  --  SKIPPED: migration 0017 is not applied yet");
+    return;
+  }
+  section("Delivery windows, runs and the courier (migration 0017)");
+  check("the owner can read the windows and the runs", r.status === 200 && (await rest("GET", "delivery_runs?select=id&limit=1", { token: adminToken })).status === 200);
+  const who = [["anon", ANON], ...(userToken ? [["an ordinary logged-in user", userToken]] : []), ...(courierToken ? [["a courier", courierToken]] : [])];
+  for (const [name, token] of who) {
+    for (const t of ["delivery_windows", "delivery_runs", "delivery_run_events"]) {
+      r = await rest("GET", `${t}?select=*&limit=1`, { token });
+      check(`${name} sees nothing in ${t}`, deniedOrEmpty(r), brief(r));
+    }
+    r = await rest("POST", "delivery_windows", { token, body: { departure_time: "23:00", order_cutoff_time: "22:00" } });
+    check(`${name} cannot create a delivery window`, refused(r), brief(r));
+    r = await rpc("claim_delivery_run", token, { p_run_id: randomUUID() });
+    check(`${name} cannot claim a run`, name === "a courier" ? r.status >= 400 && /RUN_NOT_FOUND/.test(r.text) : refused(r), brief(r));
+  }
+  if (staffToken) {
+    r = await rest("POST", "delivery_windows", { token: staffToken, body: { departure_time: "23:00", order_cutoff_time: "22:00" } });
+    check("staff cannot create a delivery window (owner-only)", refused(r), brief(r));
+    r = await rpc("courier_list_open_runs", staffToken);
+    check("staff (not a courier) cannot use the courier screens", refused(r), brief(r));
+  }
+  r = await rpc("get_delivery_slots", ANON);
+  check("anyone can read get_delivery_slots(), and it never carries a capacity or an order count", r.status === 200 && Array.isArray(r.json) && !/capacity|order_count/.test(r.text), brief(r));
+  r = await call("POST", `${URL_}/rest/v1/rpc/get_business_settings`, { body: {} });
+  check("the public settings list windows without a capacity", r.status === 200 && !/capacity/.test(JSON.stringify(r.json?.delivery_windows ?? [])), `HTTP ${r.status}`);
+
+  if (!courierToken) {
+    skipped.push("courier role checks (set COURIER_EMAIL / COURIER_PASSWORD: a user in admin_users with role 'courier')");
+    section("Courier role  --  SKIPPED (set COURIER_EMAIL / COURIER_PASSWORD)");
+    return;
+  }
+  section("Courier role — delivery runs only");
+  r = await rpc("get_my_access", courierToken);
+  check("get_my_access() says courier", r.status === 200 && r.json?.role === "courier" && r.json?.courier === true, brief(r));
+  r = await rpc("is_staff", courierToken);
+  check("is_staff() is FALSE for a courier", r.status === 200 && r.json === false, brief(r));
+  r = await rpc("is_admin", courierToken);
+  check("is_admin() is FALSE for a courier", r.status === 200 && r.json === false, brief(r));
+  for (const t of ["orders", "order_items", "order_status_events", "categories", "products", "business_settings", "payment_attempts", "customers"]) {
+    r = await rest("GET", `${t}?select=*&limit=1`, { token: courierToken });
+    check(`a courier sees nothing in ${t}`, deniedOrEmpty(r), brief(r));
+  }
+  r = await rpc("transition_order", courierToken, { p_order_id: randomUUID(), p_expected_status: "confirmed", p_to_status: "preparing", p_reason: null });
+  check("a courier cannot move orders with transition_order()", r.status >= 400 && /NOT_AUTHORIZED|permission denied/i.test(r.text), brief(r));
+  r = await rpc("resolve_stock_return", courierToken, { p_order_id: randomUUID(), p_outcome: "returned" });
+  check("a courier cannot confirm a stock return", r.status >= 400 && /NOT_AUTHORIZED|permission denied/i.test(r.text), brief(r));
+  r = await rpc("courier_list_open_runs", courierToken);
+  check("a courier CAN list open runs, and the list carries no customer details", r.status === 200 && Array.isArray(r.json) && !ORDER_PII_KEYS.test(r.text), brief(r));
+  r = await rpc("courier_my_runs", courierToken);
+  check("a courier CAN read his own runs", r.status === 200 && Array.isArray(r.json), brief(r));
+  r = await rpc("complete_delivery_stop", courierToken, { p_order_id: randomUUID(), p_id_checked: true });
+  check("a courier cannot complete a stop that is not in a run of his", r.status >= 400 && /ORDER_NOT_FOUND|NOT_AUTHORIZED/.test(r.text), brief(r));
+  r = await rpc("fail_delivery_stop", courierToken, { p_order_id: randomUUID(), p_reason: "x" });
+  check("...nor fail one", r.status >= 400 && /ORDER_NOT_FOUND|NOT_AUTHORIZED/.test(r.text), brief(r));
+}
+
+/**
  * Part 3 (opt-in: --signups-enabled) — for AFTER public sign-ups are switched on. Instead of expecting self-registration
  * to be refused, proves a freshly self-registered user has no power at all. NOTE: it creates a throwaway, unconfirmed
  * user that this script cannot delete (no service-role key, by design) — remove it in Authentication -> Users.
@@ -598,6 +675,18 @@ async function main() {
       await rest("PATCH", `business_hours?schedule_type=eq.orders&day_of_week=eq.${today}`, { token: adminToken,
         body: { is_open: true, open_time: "00:00", close_time: "23:59:59" } });
     }
+  }
+
+  // ------------------------------------- 0017: no active delivery window while the probe orders are placed (restored in cleanup)
+  const win0017 = await rest("GET", "delivery_windows?is_active=eq.true&select=id", { token: adminToken });
+  if (win0017.status === 200 && (win0017.json ?? []).length) {
+    windowsPausedFor0017 = win0017.json.map((w) => w.id);
+    await rest("PATCH", `delivery_windows?id=in.(${windowsPausedFor0017.join(",")})`, { token: adminToken, body: { is_active: false } });
+  }
+  if (COURIER_EMAIL && COURIER_PASSWORD) {
+    const c = await signIn(COURIER_EMAIL, COURIER_PASSWORD);
+    if (c.error) { console.error(c.error); process.exit(1); }
+    courierToken = c.token;
   }
 
   // ------------------------------------------------------- 0. admin sets up probes
@@ -1132,7 +1221,9 @@ async function main() {
     // fulfillment_method since migration 0015 (the order-tracking page); without 0015 the old five fields
     const narrow = Object.keys(r.json ?? {}).sort().join(",");
     check("...response has exactly the narrow field set",
-      narrow === "fulfillment_method,order_number,order_status,payment_method,payment_status,total_cents" || narrow === "order_number,order_status,payment_method,payment_status,total_cents", narrow);
+      narrow === "delivery_departure_time,fulfillment_method,order_number,order_status,payment_method,payment_status,total_cents"
+      || narrow === "fulfillment_method,order_number,order_status,payment_method,payment_status,total_cents"
+      || narrow === "order_number,order_status,payment_method,payment_status,total_cents", narrow);
     r = await rpc("get_order_status", ANON, { p_order_id: randomUUID() });
     check("get_order_status() for a nonexistent order returns null, not an error or a hint either way", r.status === 200 && r.json === null, `HTTP ${r.status} ${r.text.slice(0, 100)}`);
 
@@ -1322,6 +1413,7 @@ async function main() {
   // ------------------------------------------------------------------- 5g. coupons (migration 0014)
   await couponChecks();
   await costChecks();
+  await deliveryChecks();
 
   // ------------------------------------------------------------------- 6. sign-ups
   if (SIGNUPS_ENABLED) {

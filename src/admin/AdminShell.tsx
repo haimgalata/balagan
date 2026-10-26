@@ -15,17 +15,31 @@ import { CostsPage } from "@/admin/costs/CostsPage";
 import { ScanPage } from "@/admin/costs/ScanPage";
 import { COSTS_PATH, SCAN_PATH } from "@/admin/costs/costsRoute";
 import { ORDERS_PATH, isOrdersPath } from "@/admin/orders/ordersRoute";
+import { CourierPage } from "@/admin/courier/CourierPage";
+import { COURIER_PATH } from "@/admin/courier/courierRoute";
 import type { AdminRole } from "@/admin/useAdminSession";
 
 interface AdminShellProps {
   email: string;
   role: AdminRole;
+  /** The account also drives delivery runs (always true for the 'courier' role). */
+  courier?: boolean;
   client: SupabaseClient;
   onSignOut: () => void;
 }
 
-/** Sections of the dashboard. `ownerOnly` sections are hidden from staff (the database refuses them anyway). */
-const NAV_ITEMS = [
+interface NavItem {
+  label: string;
+  path: string;
+  enabled: boolean;
+  /** hidden from staff (the database refuses them anyway) */
+  ownerOnly: boolean;
+  /** shown only to accounts that drive delivery runs — and, for a courier-only account, the only item shown */
+  courierOnly?: boolean;
+}
+
+/** Sections of the dashboard. */
+const NAV_ITEMS: NavItem[] = [
   { label: "ראשי", path: ADMIN_ROOT, enabled: true, ownerOnly: true },
   { label: "הזמנות", path: ORDERS_PATH, enabled: true, ownerOnly: false },
   { label: "קטגוריות", path: `${ADMIN_ROOT}/categories`, enabled: true, ownerOnly: true },
@@ -35,7 +49,15 @@ const NAV_ITEMS = [
   { label: "עלויות ורווח", path: COSTS_PATH, enabled: true, ownerOnly: true },
   { label: "סריקה", path: SCAN_PATH, enabled: true, ownerOnly: true },
   { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true, ownerOnly: true },
-] as const;
+  { label: "שליח", path: COURIER_PATH, enabled: true, ownerOnly: false, courierOnly: true },
+];
+
+/** Which sections an account is offered. UX only — every table and function checks the caller itself. */
+function isVisible(item: NavItem, role: AdminRole, courier: boolean): boolean {
+  if (item.courierOnly) return courier;
+  if (role === "courier") return false;
+  return role === "owner" || !item.ownerOnly;
+}
 
 const SUMMARY_TABLES = [
   { table: "categories", label: "קטגוריות" },
@@ -107,17 +129,20 @@ function NotFound() {
 }
 
 /** The signed-in admin frame: header (who is signed in + sign out), section navigation and the current page. */
-export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) {
+export function AdminShell({ email, role, courier = role === "courier", client, onSignOut }: AdminShellProps) {
   const path = useAdminPath();
   const onOrders = isOrdersPath(path);
-  const navItems = NAV_ITEMS.filter((item) => role === "owner" || !item.ownerOnly);
+  const onCourier = path === COURIER_PATH;
+  const navItems = NAV_ITEMS.filter((item) => isVisible(item, role, courier));
 
-  // Staff only ever work in Orders: anywhere else in /admin sends them there. (UX — every other table and
-  // function refuses a staff session at the database regardless.)
-  const staffOutsideOrders = role === "staff" && !onOrders;
+  // Staff only ever work in Orders (and, if they also drive, the courier screen); a courier only in his own screen:
+  // anywhere else in /admin sends them home. (UX — every other table and function refuses their session at the
+  // database regardless.)
+  const redirectTo =
+    role === "courier" ? (onCourier ? null : COURIER_PATH) : role === "staff" ? (onOrders || (courier && onCourier) ? null : ORDERS_PATH) : null;
   useEffect(() => {
-    if (staffOutsideOrders) navigateAdmin(ORDERS_PATH);
-  }, [staffOutsideOrders]);
+    if (redirectTo) navigateAdmin(redirectTo);
+  }, [redirectTo]);
 
   // On a phone the menu is a scrolling strip: keep the current section in view.
   const navRef = useRef<HTMLElement>(null);
@@ -125,7 +150,7 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
     const current = navRef.current?.querySelector('[aria-current="page"]');
     if (current && typeof (current as HTMLElement).scrollIntoView === "function") (current as HTMLElement).scrollIntoView({ block: "nearest", inline: "center" });
   }, [path]);
-  if (staffOutsideOrders) return null;
+  if (redirectTo) return null;
 
   return (
     <div className="min-h-screen bg-brand-bg text-brand-text">
@@ -133,7 +158,7 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
         <div className="mx-auto flex max-w-container items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-baseline gap-2">
             <span className="font-display text-xl text-brand-gold">בלאגן</span>
-            <span className="text-sm font-medium text-brand-text-muted">{role === "staff" ? "הזמנות" : "ניהול"}</span>
+            <span className="text-sm font-medium text-brand-text-muted">{role === "staff" ? "הזמנות" : role === "courier" ? "משלוחים" : "ניהול"}</span>
           </div>
           <div className="flex min-w-0 items-center gap-3">
             <span dir="ltr" className="min-w-0 max-w-[9.5rem] truncate text-xs text-brand-text-muted sm:max-w-xs sm:text-sm" data-testid="admin-email">
@@ -180,8 +205,10 @@ export function AdminShell({ email, role, client, onSignOut }: AdminShellProps) 
       </header>
 
       <main className={`mx-auto px-4 py-6 sm:px-6 ${onOrders ? "max-w-[112rem]" : "max-w-container"}`}>
-        {onOrders ? (
+        {onOrders && role !== "courier" ? (
           <OrdersPage client={client} role={role} path={path} />
+        ) : onCourier && courier ? (
+          <CourierPage client={client} />
         ) : path === ADMIN_ROOT ? (
           <>
             <h1 className="mb-4 text-xl font-bold text-brand-text">סקירה</h1>

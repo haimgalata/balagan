@@ -10,6 +10,8 @@ import { useActiveOrders, type Connection } from "@/admin/orders/useActiveOrders
 import { useNow } from "@/admin/orders/useNow";
 import { useOrderActions } from "@/admin/orders/useOrderActions";
 import { useOrderAlerts } from "@/admin/orders/useOrderAlerts";
+import { RunsPanel } from "@/admin/orders/RunsPanel";
+import { runsNeedingAttention } from "@/admin/orders/runModel";
 import {
   STATUS_LABEL,
   addressLine,
@@ -24,6 +26,7 @@ import {
 const LANES: { status: ActiveStatus; title: string; empty: string }[] = [
   { status: "confirmed", title: STATUS_LABEL.confirmed, empty: "אין הזמנות חדשות" },
   { status: "preparing", title: STATUS_LABEL.preparing, empty: "אין הזמנות בהכנה" },
+  { status: "ready_for_dispatch", title: STATUS_LABEL.ready_for_dispatch, empty: "אין הזמנות שממתינות לשליח" },
   { status: "out_for_delivery", title: STATUS_LABEL.out_for_delivery, empty: "אין הזמנות בדרך" },
   { status: "ready_for_pickup", title: STATUS_LABEL.ready_for_pickup, empty: "אין הזמנות שמחכות לאיסוף" },
 ];
@@ -33,14 +36,19 @@ const LANES: { status: ActiveStatus; title: string; empty: string }[] = [
  * on (read from the public get_business_settings(), which staff may call too), plus any lane that still holds orders.
  * Until the settings arrive (or if they can't be read) the delivery lane is shown, as before migration 0015.
  */
-function useFulfillmentModes(client: SupabaseClient): { pickup: boolean; delivery: boolean } {
-  const [modes, setModes] = useState({ pickup: false, delivery: true });
+function useFulfillmentModes(client: SupabaseClient): { pickup: boolean; delivery: boolean; windows: boolean } {
+  const [modes, setModes] = useState({ pickup: false, delivery: true, windows: false });
   useEffect(() => {
     let alive = true;
     void client.rpc("get_business_settings").then(({ data }) => {
       if (!alive || typeof data !== "object" || data === null) return;
       const d = data as Record<string, unknown>;
-      setModes({ pickup: d.pickup_enabled === true, delivery: d.delivery_enabled !== false });
+      setModes({
+        pickup: d.pickup_enabled === true,
+        delivery: d.delivery_enabled !== false,
+        // the "ready for the courier" lane exists once the owner has defined delivery windows (migration 0017)
+        windows: Array.isArray(d.delivery_windows) && d.delivery_windows.length > 0,
+      });
     }, () => undefined);
     return () => {
       alive = false;
@@ -115,7 +123,13 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
       LANES.map((lane) => ({ ...lane, orders: (data?.active ?? []).filter((o) => o.order_status === lane.status) })).filter(
         (lane) =>
           lane.orders.length > 0 ||
-          (lane.status === "out_for_delivery" ? modes.delivery : lane.status === "ready_for_pickup" ? modes.pickup : true)
+          (lane.status === "out_for_delivery"
+            ? modes.delivery
+            : lane.status === "ready_for_pickup"
+              ? modes.pickup
+              : lane.status === "ready_for_dispatch"
+                ? modes.delivery && modes.windows
+                : true)
       ),
     [data, modes]
   );
@@ -124,6 +138,7 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
     return [...(data?.awaitingReturn ?? []), ...(data?.finishedToday ?? []).filter(paidButDead)].filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)));
   }, [data]);
   const finished = (data?.finishedToday ?? []).filter((o) => !attention.some((a) => a.id === o.id));
+  const runAlerts = useMemo(() => runsNeedingAttention(data?.runs ?? [], now), [data, now]);
 
   return (
     <div className="space-y-4" data-testid="orders-board">
@@ -206,9 +221,21 @@ export function OrdersBoardPage({ client, role }: { client: SupabaseClient; role
             ))}
           </div>
 
-          {attention.length > 0 && (
+          <RunsPanel runs={data.runs} orders={data.active} actions={actions} />
+
+          {(attention.length > 0 || runAlerts.length > 0) && (
             <section aria-label="דורש טיפול" data-testid="needs-attention" className="rounded-xl border border-brand-danger/60 p-3">
-              <h2 className="mb-2 text-base font-semibold text-brand-danger">דורש טיפול ({attention.length})</h2>
+              <h2 className="mb-2 text-base font-semibold text-brand-danger">דורש טיפול ({attention.length + runAlerts.length})</h2>
+              {runAlerts.length > 0 && (
+                <ul className="mb-3 space-y-1.5" data-testid="run-attention">
+                  {runAlerts.map((alert) => (
+                    <li key={alert.run.id} className="rounded-md border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-text">
+                      {alert.message}
+                      {alert.kind === "late" && alert.run.courier_phone ? " — אפשר לחייג אליו מלוח הריצות." : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                 {attention.map((order) => (
                   <OrderCard key={order.id} order={order} role={role} actions={actions} now={now} onOpen={setOpenOrder} />

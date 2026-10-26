@@ -12,6 +12,12 @@ export type OrderErrorKind =
   | "reason-required"
   | "invalid-transition"
   | "not-found"
+  | "run-taken"
+  | "run-departed"
+  | "run-not-claimed"
+  | "run-empty"
+  | "use-run"
+  | "id-check"
   | "permission"
   | "setup-needed"
   | "network"
@@ -31,6 +37,12 @@ export const ERROR_MESSAGES: Record<Exclude<OrderErrorKind, "stale">, string> = 
   "reason-required": "חובה לציין סיבת ביטול.",
   "invalid-transition": "אי אפשר לבצע את המעבר הזה מהמצב הנוכחי של ההזמנה.",
   "not-found": "ההזמנה לא נמצאה.",
+  "run-taken": "הריצה כבר נלקחה על ידי שליח אחר.",
+  "run-departed": "הריצה כבר יצאה לדרך, ולכן אי אפשר לשחרר אותה.",
+  "run-not-claimed": "אפשר לצאת רק אחרי שהריצה נלקחה על ידי שליח.",
+  "run-empty": "אין בריצה הזמנות מוכנות ליציאה.",
+  "use-run": "ההזמנה שייכת לריצת משלוח: היציאה והמסירה נעשות דרך השליח.",
+  "id-check": "יש לאשר שנבדקה תעודה מזהה לפני המסירה.",
   permission: "אין הרשאה לבצע את הפעולה. ייתכן שההתחברות פגה — התנתקו והתחברו מחדש.",
   "setup-needed": "חסר עדכון במסד הנתונים: יש להריץ את הקובץ supabase/migrations/0010_order_management.sql ב-SQL Editor של Supabase ואז לרענן את העמוד.",
   network: "אין חיבור לשרת. בדקו את החיבור ונסו שוב.",
@@ -47,7 +59,13 @@ export function describeError(error: RawApiError): OrderError {
   const kind: Exclude<OrderErrorKind, "stale"> =
     /REASON_REQUIRED/.test(text) ? "reason-required"
     : /INVALID_TRANSITION|INVALID_STATUS|INVALID_OUTCOME/.test(text) ? "invalid-transition"
-    : /ORDER_NOT_FOUND/.test(text) ? "not-found"
+    : /ORDER_NOT_FOUND|RUN_NOT_FOUND/.test(text) ? "not-found"
+    : /ALREADY_CLAIMED/.test(text) ? "run-taken"
+    : /RUN_ALREADY_DEPARTED/.test(text) ? "run-departed"
+    : /RUN_NOT_CLAIMED/.test(text) ? "run-not-claimed"
+    : /RUN_EMPTY/.test(text) ? "run-empty"
+    : /USE_DELIVERY_RUN/.test(text) ? "use-run"
+    : /ID_CHECK_REQUIRED/.test(text) ? "id-check"
     : code === "42501" || /NOT_AUTHORIZED|permission denied|row-level security/i.test(text) ? "permission"
     : code === "PGRST202" || code === "PGRST205" || /could not find the (function|table)|column .* does not exist/i.test(text) ? "setup-needed"
     : code === "" && /fetch|network|failed to|load failed/i.test(text) ? "network"

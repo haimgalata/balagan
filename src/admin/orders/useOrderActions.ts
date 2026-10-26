@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { resolveStockReturn, transitionOrder } from "@/admin/orders/ordersApi";
+import { releaseDeliveryRun, resolveStockReturn, transitionOrder } from "@/admin/orders/ordersApi";
 import type { OrderError } from "@/admin/orders/ordersErrors";
 import type { OrderRow, OrderStatus } from "@/admin/orders/orderModel";
 
@@ -45,7 +45,17 @@ export function useOrderActions(client: SupabaseClient, refresh: () => Promise<v
     [client, finish]
   );
 
-  return { busyId, error, clearError: () => setError(null), actedIds, move, settleStock };
+  /** Lets go of a delivery run's courier (one who did not show up) — only before the run has left. */
+  const releaseRun = useCallback(
+    async (runId: string): Promise<boolean> => {
+      setBusyId(runId);
+      const result = await releaseDeliveryRun(client, runId);
+      return finish(runId, result);
+    },
+    [client, finish]
+  );
+
+  return { busyId, error, clearError: () => setError(null), actedIds, move, settleStock, releaseRun };
 }
 
 export type OrderActions = ReturnType<typeof useOrderActions>;

@@ -13,6 +13,7 @@ import { ClubCouponBox, ClubIdentity, useClub, useClubAddresses, useClubCoupon }
 import { clearGuestDetails, readGuestDetails, saveGuestDetails } from "@/checkout/lib/guestMemory";
 import { CURRENT_TERMS_VERSION } from "@/checkout/lib/terms";
 import { useCheckoutValidation } from "@/checkout/useCheckoutValidation";
+import { useDeliverySlots } from "@/checkout/useDeliverySlots";
 import {
   createOrder,
   describeOrderError,
@@ -125,6 +126,8 @@ export function CheckoutPage() {
   const { isOpen: ordersOpen, hoursLabel: orderHoursLabel } = useOrderStatus();
   const store = useStoreStatus();
   const validation = useCheckoutValidation();
+  // Delivery windows (migration 0017): looked up live for a delivery checkout; none defined = no choice to make.
+  const deliverySlots = useDeliverySlots(rules.fulfillment === "delivery", (settings.delivery_windows?.length ?? 0) > 0);
   const [submitting, setSubmitting] = useState(false);
   // Snapshotting `items` at the moment of submit (rather than re-reading `lines` once validation settles)
   // means an edit to the cart made WHILE the final revalidation is running can't slip an order through for
@@ -140,7 +143,8 @@ export function CheckoutPage() {
   const addresses = useClubAddresses(member?.session.accessToken ?? null);
   // Hold the form back until a restored session (and the member's addresses) are known, so it never flashes blank
   // and then jumps to the saved details.
-  const clubLoading = club?.state.status === "loading" || (member !== null && addresses.status !== "ready");
+  const clubLoading =
+    club?.state.status === "loading" || (member !== null && addresses.status !== "ready") || deliverySlots.status === "loading";
   const [memoryVersion, setMemoryVersion] = useState(0);
   const remembered = useMemo(() => (member ? null : readGuestDetails()), [member !== null, memoryVersion]);
   const isMember = member !== null;
@@ -208,6 +212,7 @@ export function CheckoutPage() {
       .catch((error: unknown) => {
         const code = error instanceof OrderCreationError ? error.code : "NETWORK_ERROR";
         if (code.startsWith("COUPON_")) coupon.rejectFromServer(code); // the database refused the coupon: drop it, keep the order
+        if (code.startsWith("WINDOW_")) deliverySlots.refresh(); // the chosen window closed or filled: show what is open now
         setOrderError(code);
       });
   }, [submitting, validation.phase, validation.blockedLines, belowMinimum, ordersOpen, pending]);
@@ -249,6 +254,12 @@ export function CheckoutPage() {
       <main className="mx-auto max-w-2xl px-4 py-8">
         {validation.phase === "failed" ? (
           <ErrorPanel onRetry={validation.revalidate} />
+        ) : deliverySlots.status === "failed" ? (
+          <FullPageState>
+            <h1 className="text-lg font-semibold text-brand-text">לא ניתן לטעון את חלונות המשלוח כרגע</h1>
+            <p className="max-w-sm text-sm text-brand-text-muted">בדקו את החיבור לאינטרנט ונסו שוב.</p>
+            <Button onClick={deliverySlots.refresh}>נסו שוב</Button>
+          </FullPageState>
         ) : clubLoading ? (
           <FullPageState>
             <Loader2 size={28} className="animate-spin text-brand-gold" aria-hidden="true" />
@@ -300,6 +311,7 @@ export function CheckoutPage() {
               fulfillment={rules.fulfillment}
               storeAddress={rules.storeAddress}
               storeHoursLabel={store.hoursLabel}
+              deliverySlots={deliverySlots.status === "ready" ? deliverySlots.slots : null}
               cashEnabled={rules.cashEnabled}
               cardEnabled={rules.cardEnabled}
               prefill={member ? memberPrefill : remembered ?? undefined}

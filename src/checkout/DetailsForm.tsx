@@ -7,6 +7,7 @@ import type { PaymentMethod } from "@/checkout/lib/ordersApi";
 import { isValidIsraeliPhone } from "@/storefront/lib/phone";
 import type { SavedAddress } from "@/account/types";
 import type { FulfillmentMethod } from "@/storefront/lib/fulfillment";
+import { firstAvailableSlotId, isWindowRequired, slotLabel, type DeliverySlot } from "@/storefront/lib/deliveryWindows";
 
 export interface CustomerDetails {
   firstName: string;
@@ -15,6 +16,8 @@ export interface CustomerDetails {
   /** Optional — for future order confirmations/receipts only. */
   email: string;
   fulfillmentMethod: FulfillmentMethod;
+  /** The delivery window chosen (null for pickup, or while the owner has defined none). */
+  deliveryWindowId: string | null;
   /** Always `NETIVOT_CITY_NAME` for delivery (Netivot-only, not user-editable); empty for pickup, like the other address fields. */
   city: string;
   street: string;
@@ -51,6 +54,8 @@ interface DetailsFormProps {
   /** Pickup: where the store is (owner-typed; may be missing) and today's store hours. */
   storeAddress?: string | null;
   storeHoursLabel?: string;
+  /** Delivery: today's windows (empty / null = none defined, no choice to make). */
+  deliverySlots?: DeliverySlot[] | null;
   cashEnabled: boolean;
   /** Card is offered only once a payment provider is wired AND the owner switched it on. */
   cardEnabled: boolean;
@@ -74,7 +79,7 @@ interface DetailsFormProps {
 }
 
 type FieldErrors = Partial<
-  Record<"firstName" | "lastName" | "phone" | "email" | "street" | "houseNumber" | "ageConfirmed" | "termsAccepted" | "paymentMethod", string>
+  Record<"firstName" | "lastName" | "phone" | "email" | "street" | "houseNumber" | "deliveryWindow" | "ageConfirmed" | "termsAccepted" | "paymentMethod", string>
 >;
 
 const inputClasses =
@@ -178,6 +183,7 @@ export function DetailsForm({
   fulfillment,
   storeAddress = null,
   storeHoursLabel,
+  deliverySlots = null,
   cashEnabled,
   cardEnabled,
   disabled,
@@ -212,6 +218,11 @@ export function DetailsForm({
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const pickup = fulfillment === "pickup";
+  // A window is chosen exactly when it is a delivery order AND the owner has defined windows.
+  const needsWindow = !pickup && isWindowRequired(deliverySlots);
+  const slots = deliverySlots ?? [];
+  const [windowId, setWindowId] = useState<string | null>(firstAvailableSlotId(slots));
+  const noWindowAvailable = needsWindow && !slots.some((slot) => slot.available);
   // Only methods the owner switched on can be chosen; null = none is available right now (submitting is blocked).
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(cashEnabled ? "cash" : cardEnabled ? "card" : null);
   const noPaymentMethod = !cashEnabled && !cardEnabled;
@@ -230,6 +241,7 @@ export function DetailsForm({
       if (!NETIVOT_STREETS.includes(street.trim())) nextErrors.street = "נא לבחור רחוב מהרשימה המוצעת";
       if (houseNumber.trim() === "") nextErrors.houseNumber = "נא להזין מספר בית";
     }
+    if (needsWindow && !slots.some((slot) => slot.id === windowId && slot.available)) nextErrors.deliveryWindow = "נא לבחור חלון משלוח";
     if (paymentMethod === null) nextErrors.paymentMethod = "נא לבחור אופן תשלום";
     if (!ageConfirmed) nextErrors.ageConfirmed = "יש לאשר את הצהרת הגיל כדי להמשיך";
     if (!termsAlreadyAccepted && !termsAccepted) nextErrors.termsAccepted = "יש לאשר את התקנון כדי להמשיך";
@@ -243,6 +255,7 @@ export function DetailsForm({
     if (paymentMethod === null) return;
     onSubmit({
       fulfillmentMethod: fulfillment,
+      deliveryWindowId: needsWindow ? windowId : null,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       phone: phone.trim(),
@@ -419,6 +432,46 @@ export function DetailsForm({
       </fieldset>
       )}
 
+      {needsWindow && (
+        <fieldset className="flex flex-col gap-3" data-testid="delivery-windows">
+          <legend className="mb-1 text-sm font-semibold text-brand-text">מתי המשלוח יוצא?</legend>
+          <div role="radiogroup" aria-label="חלון משלוח" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {slots.map((slot) => (
+              <button
+                key={slot.id}
+                type="button"
+                role="radio"
+                aria-checked={slot.id === windowId}
+                disabled={!slot.available}
+                onClick={() => {
+                  setWindowId(slot.id);
+                  setErrors((previous) => ({ ...previous, deliveryWindow: undefined }));
+                }}
+                className={`rounded-lg border p-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  slot.id === windowId && slot.available
+                    ? "border-brand-gold bg-brand-gold/10 text-brand-gold"
+                    : "border-brand-border text-brand-text hover:border-brand-border-strong"
+                }`}
+              >
+                {slotLabel(slot)}
+                {!slot.available && <span className="block text-xs font-normal">לא זמין</span>}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-brand-text-muted">השליח יוצא בשעה שנבחרה עם כל ההזמנות של אותו חלון, וההגעה אליכם בהמשך הדרך.</p>
+          {noWindowAvailable && (
+            <p role="status" className="text-sm text-brand-danger">
+              אין כרגע חלון משלוח פנוי להיום, ולכן אי אפשר להשלים הזמנה למשלוח.
+            </p>
+          )}
+          {errors.deliveryWindow && !noWindowAvailable && (
+            <p role="alert" className="text-xs text-brand-danger">
+              {errors.deliveryWindow}
+            </p>
+          )}
+        </fieldset>
+      )}
+
       <div className="flex flex-col gap-1.5">
         <label htmlFor="checkout-notes" className="text-sm font-medium text-brand-text">
           {pickup ? "הערות להזמנה (אופציונלי)" : "הערות למשלוח (אופציונלי)"}
@@ -520,7 +573,7 @@ export function DetailsForm({
         </p>
       )}
 
-      <Button type="submit" size="lg" disabled={disabled || busy || noPaymentMethod} className="w-full">
+      <Button type="submit" size="lg" disabled={disabled || busy || noPaymentMethod || noWindowAvailable} className="w-full">
         {busy ? (
           <>
             <Loader2 size={18} className="animate-spin" aria-hidden="true" />

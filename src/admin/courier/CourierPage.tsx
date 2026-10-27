@@ -23,6 +23,7 @@ import {
 } from "@/admin/courier/courierModel";
 import { claimRun, completeStop, departRun, failStop, releaseRun, type CourierResult } from "@/admin/courier/courierApi";
 import { useCourierRuns } from "@/admin/courier/useCourierRuns";
+import { CourierHistoryView } from "@/admin/courier/CourierHistoryView";
 
 const STOP_BADGE: Record<Stop["order_status"], { text: string; tone: string }> = {
   ready_for_dispatch: { text: "מוכנה ליציאה", tone: "bg-brand-bg text-brand-text" },
@@ -287,6 +288,7 @@ export function CourierPage({ client }: { client: SupabaseClient }) {
   const { data, error, refresh } = useCourierRuns(client);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [view, setView] = useState<"runs" | "history">("runs");
   const activeRuns = data?.mine.filter((run) => run.status !== "finished") ?? [];
   const finishedRuns = data?.mine.filter((run) => run.status === "finished") ?? [];
 
@@ -303,23 +305,40 @@ export function CourierPage({ client }: { client: SupabaseClient }) {
     <div className="mx-auto max-w-2xl space-y-5" data-testid="courier-page">
       <h1 className="text-xl font-bold text-brand-text">משלוחים</h1>
 
+      <div role="tablist" aria-label="תצוגה" className="grid grid-cols-2 gap-1 rounded-xl border border-brand-border bg-brand-bg-elevated p-1">
+        {([["runs", "הריצות"], ["history", "ההיסטוריה שלי"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={view === key}
+            onClick={() => setView(key)}
+            className={`min-h-11 rounded-lg px-3 text-sm font-medium transition-colors ${view === key ? "bg-brand-gold text-brand-bg" : "text-brand-text-muted hover:text-brand-text"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "history" && <CourierHistoryView client={client} />}
+
       {actionError && (
         <p role="alert" data-testid="courier-error" className="rounded-md border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
           {actionError}
         </p>
       )}
-      {error && !data && (
+      {view === "runs" && error && !data && (
         <p role="alert" className="rounded-md border border-brand-danger/40 bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
           {error.message}
         </p>
       )}
-      {!data && !error && (
+      {view === "runs" && !data && !error && (
         <div role="status" className="flex justify-center p-10 text-brand-gold">
           <Loader2 className="animate-spin" aria-label="טוען" />
         </div>
       )}
 
-      {data && (
+      {view === "runs" && data && (
         <>
           {activeRuns.length > 0 && (
             <section aria-label="הריצה שלי עכשיו" className="space-y-3">

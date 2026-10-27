@@ -66,6 +66,8 @@ await db.exec(file("0017_delivery.sql"));
 await db.exec(file("0017_delivery.sql")); // re-runnable
 await db.exec(file("0018_courier_pay.sql"));
 await db.exec(file("0018_courier_pay.sql")); // re-runnable
+await db.exec(file("0019_courier_history.sql"));
+await db.exec(file("0019_courier_history.sql")); // re-runnable
 await db.exec(file("0002_rls.sql"));               // re-running 0002 must not widen is_admin()
 await db.exec(`
   insert into auth.users (id, email) values ('${COURIER}','courier@x.test'), ('${COURIER2}','courier2@x.test');
@@ -314,7 +316,7 @@ const GUARDED_ADMIN = ["is_admin", "is_staff", "get_my_role", "expire_stale_orde
   "is_courier", "get_my_access", "courier_list_open_runs", "courier_my_runs", "claim_delivery_run", "release_delivery_run",
   "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop",
   // courier pay (0018): each re-checks is_admin() (owner only) inside itself
-  "admin_courier_payroll", "admin_set_courier_pay", "admin_set_courier_rate", "admin_record_courier_payout", "admin_delete_courier_payout"];
+  "courier_my_history", "admin_courier_payroll", "admin_set_courier_pay", "admin_set_courier_rate", "admin_record_courier_payout", "admin_delete_courier_payout"];
 // Member-facing (0012): each reads auth.uid() itself, returns only the caller's own data, and is revoked from anon.
 const MEMBER_RPCS = ["get_my_customer", "claim_guest_orders", "join_club", "get_my_orders", "set_marketing_consent", "delete_my_account",
   // coupons (0014): checks the caller's own membership itself, refuses everyone else; revoked from anon
@@ -1250,6 +1252,25 @@ for (const t of ["delivery_pay", "courier_payouts"]) {
   check(`nobody reads ${t} through the table API (owner included — only admin_courier_payroll)`, reads.every((r) => !r.ok || r.rows.length === 0));
 }
 check("the public settings carry no courier rate", !/courier|pay_/.test(JSON.stringify((await asAnon(`select public.get_business_settings() as s`)).rows[0].s)));
+// ---- the courier's own history (migration 0019): numbers only ---------------------------------------------------
+console.log("\nCourier history (0019)");
+const hist = async (who, m = month) => who(`select public.courier_my_history($1::date) as h`, [m]);
+const myHist = (await hist(asCourier)).rows[0].h;
+check("a courier sees HIS month: delivered / failed / runs / days — the same counts the owner's payroll has for him",
+  myHist.delivered === 3 && myHist.failed === 4 && myHist.runs >= 3 && myHist.days >= 1 && myHist.month === month, JSON.stringify({ d: myHist.delivered, f: myHist.failed, r: myHist.runs }));
+const allStops = myHist.run_list.flatMap((r) => r.stops);
+check("each run lists its stops by order number with the outcome and the failure reason",
+  allStops.length === 7 && allStops.some((st) => st.order_number && st.outcome === "delivered") && allStops.some((st) => st.outcome === "failed" && st.reason === "לא הוצגה תעודה מזהה")
+  && myHist.run_list.every((r) => r.run_date && r.departure_time && r.departed_at && r.finished_at));
+check("there is NO customer detail and NO money in it",
+  !/first_name|last_name|phone|street|house_number|entrance|floor|apartment|intercom|email|pay_cents|rate|paid|fee_cents|total_cents|הרצל/.test(JSON.stringify(myHist)));
+check("another courier sees only his own (nothing), and another month is empty",
+  (await hist(asCourier2)).rows[0].h.delivered === 0 && (await hist(asCourier2)).rows[0].h.run_list.length === 0
+  && (await hist(asCourier, "2020-01-01")).rows[0].h.run_list.length === 0);
+for (const [who, name] of [[asStaff, "staff"], [asPlain, "a customer"], [asAnon, "anonymous"]]) {
+  check(`${name} cannot read a courier history`, !(await hist(who)).ok);
+}
+
 check("a courier cannot read other people's rates (admin_users: own row only)", ((await asCourier(`select user_id from public.admin_users`)).rows ?? []).length === 1);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll checks passed");

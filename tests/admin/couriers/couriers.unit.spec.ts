@@ -14,7 +14,7 @@ import {
   type CourierPayroll,
   type PayrollRow,
 } from "../../../src/admin/couriers/couriersModel";
-import { failPaysCourier, FAIL_REASONS, isOpenStop } from "../../../src/admin/courier/courierModel";
+import { failPaysCourier, FAIL_REASONS, isOpenStop, parseHistory, shortDate } from "../../../src/admin/courier/courierModel";
 
 const row = (over: Partial<PayrollRow> = {}): PayrollRow => ({
   order_id: "o1", order_number: 1001, outcome: "delivered", reason: null, pay_cents: 1200, fee_cents: 2000,
@@ -105,5 +105,33 @@ test.describe("what a failed delivery pays (the courier's reason)", () => {
     expect(isOpenStop({ order_status: "out_for_delivery" })).toBe(true);
     expect(isOpenStop({ order_status: "completed" })).toBe(false);
     expect(isOpenStop({ order_status: "delivery_failed" })).toBe(false);
+  });
+});
+
+test.describe("a courier's own history (migration 0019)", () => {
+  const good = {
+    month: "2026-09-01", delivered: 1, failed: 1, runs: 1, days: 1,
+    run_list: [{ run_id: "r1", run_date: "2026-09-20", departure_time: "18:00:00", departed_at: "2026-09-20T14:55:00Z", finished_at: "2026-09-20T15:40:00Z",
+      stops: [{ order_number: 1202, outcome: "delivered", reason: null, at: "2026-09-20T15:10:00Z" }, { order_number: 1201, outcome: "failed", reason: "לא הוצגה תעודה מזהה", at: "2026-09-20T15:40:00Z" }] }],
+  };
+
+  test("the answer is checked, and carries only what the screen shows", () => {
+    const h = parseHistory(good);
+    expect(h?.delivered).toBe(1);
+    expect(h?.run_list[0].stops.map((s) => s.order_number)).toEqual([1202, 1201]);
+    expect(h?.run_list[0].stops[1].reason).toBe("לא הוצגה תעודה מזהה");
+    // anything unknown (a customer field that should never be there) is dropped, never passed through
+    const sneaky = parseHistory({ ...good, run_list: [{ ...good.run_list[0], stops: [{ ...good.run_list[0].stops[0], phone: "050-123-4567", street: "הרצל" }] }] });
+    expect(JSON.stringify(sneaky)).not.toContain("050-123-4567");
+    expect(JSON.stringify(sneaky)).not.toContain("הרצל");
+    expect(parseHistory(null)).toBeNull();
+    expect(parseHistory({ month: "2026-09-01", run_list: "no" })).toBeNull();
+    expect(parseHistory({ ...good, run_list: [{ ...good.run_list[0], stops: [{ order_number: 1, outcome: "weird" }] }] })).toBeNull();
+  });
+
+  test("short dates", () => {
+    expect(shortDate("2026-09-20")).toBe("20.9");
+    expect(shortDate("2026-10-03")).toBe("3.10");
+    expect(shortDate("bad")).toBe("bad");
   });
 });

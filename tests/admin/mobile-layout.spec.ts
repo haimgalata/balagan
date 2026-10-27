@@ -243,3 +243,15 @@ test("the courier-pay screen fits a phone", async ({ page }) => {
   await page.getByTestId("pay-row").first().getByRole("button", { name: "סכום אחר" }).click();
   await noOverflow(page);
 });
+
+test("the courier's history fits a phone", async ({ page }) => {
+  const stops = { delivery_window_id: "w-18", delivery_departure_time: "18:00:00", delivery_run_id: "run-h" };
+  const orders = createFakeOrdersDatabase(
+    [makeOrder(3201, { ...stops, order_status: "completed" }), makeOrder(3202, { ...stops, order_status: "delivery_failed", delivery_failed_reason: "לא הוצגה תעודה מזהה וגם הלקוח סירב לפתוח את הדלת" })],
+    { windows: true, runs: [{ id: "run-h", run_date: "2026-09-20", status: "finished", courier_id: COURIER_USER.id, courier_name: FAKE_COURIER_NAME, courier_phone: FAKE_COURIER_PHONE, claimed_at: "2026-09-20T06:00:00.000Z", departed_at: "2026-09-20T07:00:00.000Z", departure_time: "18:00:00" }] }
+  );
+  await open(page, orders.handle, "/admin/courier", COURIER_USER);
+  await page.getByRole("tab", { name: "ההיסטוריה שלי" }).click();
+  await expect(page.getByTestId("history-run")).toBeVisible();
+  await noOverflow(page);
+});

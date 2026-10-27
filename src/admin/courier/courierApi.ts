@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describeError, type OrderError, type RawApiError } from "@/admin/orders/ordersErrors";
-import { parseMyRuns, parseOpenRuns, type MyRun, type OpenRun } from "@/admin/courier/courierModel";
+import { parseHistory, parseMyRuns, parseOpenRuns, type CourierHistory, type MyRun, type OpenRun } from "@/admin/courier/courierModel";
 
 /**
  * The courier's calls (migration 0017) — RPC only; the database checks who the caller is on every one of them and shows
@@ -29,6 +29,18 @@ export async function loadMyRuns(client: SupabaseClient): Promise<CourierResult<
     if (error) return fail(error);
     const runs = parseMyRuns(data);
     return runs ? { ok: true, data: runs } : badShape();
+  } catch (e) {
+    return unexpected(e);
+  }
+}
+
+/** The courier's own month: counts and, per run, the order numbers with the outcome (migration 0019). No customer detail, no money. */
+export async function loadHistory(client: SupabaseClient, month: string): Promise<CourierResult<CourierHistory>> {
+  try {
+    const { data, error } = await client.rpc("courier_my_history", { p_month: month });
+    if (error) return fail(error);
+    const history = parseHistory(data);
+    return history ? { ok: true, data: history } : badShape();
   } catch (e) {
     return unexpected(e);
   }

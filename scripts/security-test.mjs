@@ -605,6 +605,17 @@ async function deliveryChecks() {
   check("a courier CAN list open runs, and the list carries no customer details", r.status === 200 && Array.isArray(r.json) && !ORDER_PII_KEYS.test(r.text), brief(r));
   r = await rpc("courier_my_runs", courierToken);
   check("a courier CAN read his own runs", r.status === 200 && Array.isArray(r.json), brief(r));
+  r = await rpc("courier_my_history", courierToken, { p_month: new Date().toISOString().slice(0, 7) + "-01" });
+  if (r.status === 404 || pgCode(r) === "PGRST202") {
+    skipped.push("courier history (apply supabase/migrations/0019_courier_history.sql, then re-run)");
+  } else {
+    check("a courier CAN read his own history, and it carries no customer detail and no money",
+      r.status === 200 && Array.isArray(r.json?.run_list) && !ORDER_PII_KEYS.test(r.text) && !/pay_cents|rate|paid/.test(r.text), brief(r));
+    for (const [name, token] of [["anon", ANON], ...(userToken ? [["an ordinary logged-in user", userToken]] : []), ...(staffToken ? [["staff", staffToken]] : [])]) {
+      r = await rpc("courier_my_history", token, { p_month: new Date().toISOString().slice(0, 7) + "-01" });
+      check(`${name} cannot read a courier history`, refused(r), brief(r));
+    }
+  }
   r = await rpc("complete_delivery_stop", courierToken, { p_order_id: randomUUID(), p_id_checked: true });
   check("a courier cannot complete a stop that is not in a run of his", r.status >= 400 && /ORDER_NOT_FOUND|NOT_AUTHORIZED/.test(r.text), brief(r));
   r = await rpc("fail_delivery_stop", courierToken, { p_order_id: randomUUID(), p_reason: "x" });

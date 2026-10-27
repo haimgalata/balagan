@@ -296,6 +296,26 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = [], options: Fak
     const isCourier = role === "courier";
     const backOffice = role === "owner" || role === "staff";
     const nowIso = new Date(FIXED_NOW_MS).toISOString();
+    if (rpc === "courier_my_history") {
+      if (!isCourier) return pgError("42501", "NOT_AUTHORIZED", 403);
+      const month = String(args.p_month ?? "").slice(0, 7);
+      const mine = runs
+        .filter((r) => r.courier_id === user.id && r.run_date.startsWith(month))
+        .map((r) => {
+          const closed = inRun(r, ["completed", "delivery_failed"]);
+          return {
+            run_id: r.id, run_date: r.run_date, departure_time: r.departure_time, departed_at: r.departed_at,
+            finished_at: closed.map((o) => o.status_changed_at).sort().at(-1) ?? null,
+            stops: closed.map((o) => ({ order_number: o.order_number, outcome: o.order_status === "completed" ? "delivered" : "failed", reason: o.delivery_failed_reason ?? null, at: o.status_changed_at })),
+          };
+        })
+        .filter((r) => r.stops.length > 0);
+      const all = mine.flatMap((r) => r.stops);
+      return { status: 200, body: {
+        month: `${month}-01`, delivered: all.filter((x) => x.outcome === "delivered").length, failed: all.filter((x) => x.outcome === "failed").length,
+        runs: mine.length, days: new Set(mine.map((r) => r.run_date)).size, run_list: mine,
+      } };
+    }
     if (rpc === "courier_list_open_runs" || rpc === "courier_my_runs") {
       if (!isCourier) return pgError("42501", "NOT_AUTHORIZED", 403);
       if (rpc === "courier_list_open_runs") {
@@ -386,7 +406,7 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = [], options: Fak
     const table = /^\/rest\/v1\/orders$/.test(url.pathname);
     const runsTable = /^\/rest\/v1\/delivery_runs$/.test(url.pathname);
     const rpc = /^\/rest\/v1\/rpc\/([a-z_]+)$/.exec(url.pathname)?.[1];
-    const COURIER_RPCS = ["courier_list_open_runs", "courier_my_runs", "claim_delivery_run", "release_delivery_run", "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop"];
+    const COURIER_RPCS = ["courier_list_open_runs", "courier_my_runs", "claim_delivery_run", "release_delivery_run", "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop", "courier_my_history"];
     if (rpc === "get_business_settings" && options.windows) {
       await json(200, { pickup_enabled: false, delivery_enabled: true, delivery_windows: [{ id: "w1", departure_time: "18:00:00", order_cutoff_time: "17:00:00" }] });
       return true;
@@ -410,10 +430,13 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = [], options: Fak
     if (runsTable) {
       if (role !== "owner" && role !== "staff") { await json(200, []); return true; }
       const statuses = /^in\.\((.*)\)$/.exec(url.searchParams.get("status") ?? "")?.[1]?.split(",");
-      await json(200, runs.filter((r) => !statuses || statuses.includes(r.status)).map((r) => {
+      const wantedId = /^eq\.(.*)$/.exec(url.searchParams.get("id") ?? "")?.[1];
+      const shaped = runs.filter((r) => (!statuses || statuses.includes(r.status)) && (!wantedId || r.id === wantedId)).map((r) => {
         const { departure_time, ...rest } = r;
         return { ...rest, delivery_windows: { departure_time } };
-      }));
+      });
+      const asObject = /vnd\.pgrst\.object/.test(ctx.headers["accept"] ?? "");
+      await json(200, asObject ? shaped[0] ?? null : shaped);
       return true;
     }
 

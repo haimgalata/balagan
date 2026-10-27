@@ -204,6 +204,134 @@ test.describe("the courier", () => {
     await c.context().close();
   });
 
+  test("what is left comes first: the next stop is highlighted, handed-over stops shrink to a line at the bottom, a finished run is folded away", async ({ page }) => {
+    const db = seed();
+    await open(page, db, STAFF_USER, "/admin/orders");
+    await card(page, 1201).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    await card(page, 1202).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    const c = await persona(page, db, COURIER_USER, "/admin/courier");
+    await c.getByRole("button", { name: "אני לוקח" }).click();
+    await c.getByRole("button", { name: "יצאתי" }).click();
+
+    // route order: אילת 3 (#1202) then הרצל 12 (#1201); the first is "next"
+    await expect(stopOf(c, 1202)).toHaveAttribute("data-next", "true");
+    await expect(stopOf(c, 1202)).toContainText("העצירה הבאה");
+    await expect(stopOf(c, 1201)).not.toHaveAttribute("data-next", "true");
+
+    await stopOf(c, 1202).getByRole("button", { name: "נמסר", exact: true }).click();
+    await stopOf(c, 1202).getByRole("checkbox", { name: /בדקתי תעודה מזהה/ }).check();
+    await stopOf(c, 1202).getByRole("button", { name: "אישור מסירה" }).click();
+
+    // the handed-over stop sinks to one line below the one still to do, which is now highlighted
+    await expect(stopOf(c, 1201)).toHaveAttribute("data-next", "true");
+    await expect(stopOf(c, 1202)).toContainText("נמסרה");
+    await expect(stopOf(c, 1202).getByRole("button")).toHaveCount(0);
+    const order = await c.getByTestId("courier-stop").evaluateAll((els) => els.map((el) => el.getAttribute("data-order-number")));
+    expect(order).toEqual(["1201", "1202"]);
+
+    await stopOf(c, 1201).getByRole("button", { name: "נמסר", exact: true }).click();
+    await stopOf(c, 1201).getByRole("checkbox", { name: /בדקתי תעודה מזהה/ }).check();
+    await stopOf(c, 1201).getByRole("button", { name: "אישור מסירה" }).click();
+
+    // the run is over: it leaves "my run now" and waits, folded, under "done today"
+    await expect(c.getByRole("region", { name: "הריצה שלי עכשיו" })).toHaveCount(0);
+    const done = c.getByTestId("finished-runs");
+    await expect(done).toContainText("הושלמו היום (1)");
+    await expect(done.getByTestId("my-run")).not.toBeVisible();
+    await done.locator("summary").click();
+    await expect(done.getByTestId("my-run")).toBeVisible();
+    await c.context().close();
+  });
+
+  test("a failure is sent with whether the customer's fault is paid: a clear customer reason yes, 'address not found' left to the owner", async ({ page }) => {
+    const db = seed();
+    await open(page, db, STAFF_USER, "/admin/orders");
+    await card(page, 1201).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    await card(page, 1202).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    const c = await persona(page, db, COURIER_USER, "/admin/courier");
+    await c.getByRole("button", { name: "אני לוקח" }).click();
+    await c.getByRole("button", { name: "יצאתי" }).click();
+
+    await stopOf(c, 1202).getByRole("button", { name: "לא נמסר", exact: true }).click();
+    await stopOf(c, 1202).getByLabel("סיבה").selectOption("לא הוצגה תעודה מזהה");
+    await stopOf(c, 1202).getByRole("button", { name: "אישור — לא נמסר" }).click();
+    await expect(stopOf(c, 1202)).toHaveAttribute("data-status", "delivery_failed");
+    expect(db.rpcLog.filter((l) => l.startsWith("fail_delivery_stop")).at(-1)).toContain('"p_pay":true');
+
+    await stopOf(c, 1201).getByRole("button", { name: "לא נמסר", exact: true }).click();
+    await stopOf(c, 1201).getByLabel("סיבה").selectOption("הכתובת לא נמצאה");
+    await stopOf(c, 1201).getByRole("button", { name: "אישור — לא נמסר" }).click();
+    await expect(stopOf(c, 1201)).toHaveAttribute("data-status", "delivery_failed");
+    expect(db.rpcLog.filter((l) => l.startsWith("fail_delivery_stop")).at(-1)).toContain('"p_pay":null');
+    await c.context().close();
+  });
+
+  test("an order shows who delivered it — name, phone and when — even after the run is over", async ({ page }) => {
+    const db = seed();
+    await open(page, db, STAFF_USER, "/admin/orders");
+    await card(page, 1201).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    const c = await persona(page, db, COURIER_USER, "/admin/courier");
+    await c.getByRole("button", { name: "אני לוקח" }).click();
+    await c.getByRole("button", { name: "יצאתי" }).click();
+    await stopOf(c, 1201).getByRole("button", { name: "נמסר", exact: true }).click();
+    await stopOf(c, 1201).getByRole("checkbox", { name: /בדקתי תעודה מזהה/ }).check();
+    await stopOf(c, 1201).getByRole("button", { name: "אישור מסירה" }).click();
+    await expect(stopOf(c, 1201)).toHaveAttribute("data-status", "completed");
+    await c.context().close();
+
+    await wake(page);
+    await page.getByTestId("finished-today").locator("summary").click();
+    await page.getByTestId("finished-today").getByRole("button", { name: /#1201/ }).click();
+    const courierCard = page.getByTestId("courier-card");
+    await expect(courierCard).toContainText("דני השליח");
+    await expect(courierCard.getByRole("link", { name: "חיוג לדני השליח" })).toHaveAttribute("href", `tel:${FAKE_COURIER_PHONE}`);
+    await expect(courierCard).toContainText("ריצת 18:00");
+    await expect(courierCard).toContainText("הסתיימה");
+  });
+
+  test("the courier's own history: the month's numbers and each run's stops — order numbers and outcomes, no customer detail, no money", async ({ page }) => {
+    const db = seed();
+    await open(page, db, STAFF_USER, "/admin/orders");
+    await card(page, 1201).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    await card(page, 1202).getByRole("button", { name: "מוכנה למשלוח" }).click();
+    const c = await persona(page, db, COURIER_USER, "/admin/courier");
+    await c.getByRole("button", { name: "אני לוקח" }).click();
+    await c.getByRole("button", { name: "יצאתי" }).click();
+    await stopOf(c, 1202).getByRole("button", { name: "נמסר", exact: true }).click();
+    await stopOf(c, 1202).getByRole("checkbox", { name: /בדקתי תעודה מזהה/ }).check();
+    await stopOf(c, 1202).getByRole("button", { name: "אישור מסירה" }).click();
+    await stopOf(c, 1201).getByRole("button", { name: "לא נמסר", exact: true }).click();
+    await stopOf(c, 1201).getByLabel("סיבה").selectOption("לא הוצגה תעודה מזהה");
+    await stopOf(c, 1201).getByRole("button", { name: "אישור — לא נמסר" }).click();
+    await expect(stopOf(c, 1201)).toHaveAttribute("data-status", "delivery_failed");
+
+    await c.getByRole("tab", { name: "ההיסטוריה שלי" }).click();
+    const history = c.getByTestId("courier-history");
+    await expect(c.getByTestId("history-month")).toHaveText("ספטמבר 2026");
+    const summary = history.getByRole("list", { name: "סיכום החודש" }).or(history.locator("dl").first());
+    await expect(summary).toContainText("נמסרו1");
+    await expect(summary).toContainText("לא נמסרו1");
+    await expect(summary).toContainText("ריצות1");
+    await expect(summary).toContainText("ימי עבודה1");
+
+    const run = history.getByTestId("history-run");
+    await expect(run).toHaveCount(1);
+    await expect(run).toContainText("20.9 · ריצת 18:00");
+    await expect(run.locator('[data-testid="history-stop"][data-outcome="delivered"]')).toContainText("#1202");
+    await expect(run.locator('[data-testid="history-stop"][data-outcome="failed"]')).toContainText("#1201");
+    await expect(run.locator('[data-testid="history-stop"][data-outcome="failed"]')).toContainText("לא הוצגה תעודה מזהה");
+    // numbers only
+    for (const secret of ["הרצל", "אילת", "050-123-4567", "דנה", "₪"]) await expect(history).not.toContainText(secret);
+
+    await c.getByRole("button", { name: "החודש הקודם" }).click();
+    await expect(c.getByTestId("history-month")).toHaveText("אוגוסט 2026");
+    await expect(history).toContainText("אין ריצות בחודש הזה");
+    await expect(c.getByRole("button", { name: "החודש הבא" })).toBeEnabled();
+    await c.getByRole("tab", { name: "הריצות" }).click();
+    await expect(c.getByTestId("courier-history")).toHaveCount(0);
+    await c.context().close();
+  });
+
   test("a failed delivery needs a reason (the 'other' reason must be spelled out)", async ({ page }) => {
     const db = seed();
     await open(page, db, STAFF_USER, "/admin/orders");

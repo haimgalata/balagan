@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describeError, type OrderError, type RawApiError } from "@/admin/orders/ordersErrors";
-import { parseMyRuns, parseOpenRuns, type MyRun, type OpenRun } from "@/admin/courier/courierModel";
+import { parseHistory, parseMyRuns, parseOpenRuns, type CourierHistory, type MyRun, type OpenRun } from "@/admin/courier/courierModel";
 
 /**
  * The courier's calls (migration 0017) — RPC only; the database checks who the caller is on every one of them and shows
@@ -34,6 +34,18 @@ export async function loadMyRuns(client: SupabaseClient): Promise<CourierResult<
   }
 }
 
+/** The courier's own month: counts and, per run, the order numbers with the outcome (migration 0019). No customer detail, no money. */
+export async function loadHistory(client: SupabaseClient, month: string): Promise<CourierResult<CourierHistory>> {
+  try {
+    const { data, error } = await client.rpc("courier_my_history", { p_month: month });
+    if (error) return fail(error);
+    const history = parseHistory(data);
+    return history ? { ok: true, data: history } : badShape();
+  } catch (e) {
+    return unexpected(e);
+  }
+}
+
 async function call(client: SupabaseClient, fn: string, args: Record<string, unknown>): Promise<CourierResult<{ changed: boolean }>> {
   try {
     const { data, error } = await client.rpc(fn, args);
@@ -49,5 +61,6 @@ export const releaseRun = (client: SupabaseClient, runId: string) => call(client
 export const departRun = (client: SupabaseClient, runId: string) => call(client, "depart_delivery_run", { p_run_id: runId });
 export const completeStop = (client: SupabaseClient, orderId: string, idChecked: boolean) =>
   call(client, "complete_delivery_stop", { p_order_id: orderId, p_id_checked: idChecked });
-export const failStop = (client: SupabaseClient, orderId: string, reason: string) =>
-  call(client, "fail_delivery_stop", { p_order_id: orderId, p_reason: reason });
+/** `pay`: true = the customer's fault (the courier is paid), false = not paid, null = the owner decides (migration 0018). */
+export const failStop = (client: SupabaseClient, orderId: string, reason: string, pay: boolean | null = null) =>
+  call(client, "fail_delivery_stop", { p_order_id: orderId, p_reason: reason, p_pay: pay });

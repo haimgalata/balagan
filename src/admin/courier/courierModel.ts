@@ -157,6 +157,19 @@ export const canRelease = (run: Pick<MyRun, "status">): boolean => run.status ==
 export const amountToCollectCents = (s: Pick<Stop, "payment_method" | "payment_status" | "total_cents">): number =>
   s.payment_method === "cash" && s.payment_status !== "paid" ? s.total_cents : 0;
 
+const CUSTOMER_FAULT_REASONS = ["הלקוח לא היה בבית / לא ענה", "לא הוצגה תעודה מזהה", "מקבל המשלוח מתחת לגיל 18", "הלקוח סירב לקבל"] as const;
+
+/** A stop still to be handed over (packed, or on the road). */
+export const isOpenStop = (s: Pick<Stop, "order_status">): boolean => s.order_status === "ready_for_dispatch" || s.order_status === "out_for_delivery";
+
+/**
+ * Whether a failed delivery is paid, from the reason the courier chose: the customer's fault (not home, no ID, under 18,
+ * refused) is paid; the rest ("address not found", "other") is left to the owner (null) — he decides in the payroll screen.
+ */
+export function failPaysCourier(reason: string): boolean | null {
+  return (CUSTOMER_FAULT_REASONS as readonly string[]).includes(reason) ? true : null;
+}
+
 export const FAIL_REASONS = [
   "הלקוח לא היה בבית / לא ענה",
   "לא הוצגה תעודה מזהה",
@@ -165,3 +178,59 @@ export const FAIL_REASONS = [
   "הלקוח סירב לקבל",
   "אחר",
 ] as const;
+
+// ---- the courier's own history (migration 0019): numbers only, no customer detail, no money ----------------------------
+
+export interface HistoryStop {
+  order_number: number;
+  outcome: "delivered" | "failed";
+  reason: string | null;
+  at: string;
+}
+export interface HistoryRun {
+  run_id: string;
+  /** `YYYY-MM-DD`, Israel */
+  run_date: string;
+  departure_time: string | null;
+  departed_at: string | null;
+  finished_at: string | null;
+  stops: HistoryStop[];
+}
+export interface CourierHistory {
+  /** `YYYY-MM-01` */
+  month: string;
+  delivered: number;
+  failed: number;
+  runs: number;
+  days: number;
+  run_list: HistoryRun[];
+}
+
+export function parseHistory(value: unknown): CourierHistory | null {
+  if (!isObj(value) || typeof value.month !== "string" || !Array.isArray(value.run_list)) return null;
+  const run_list: HistoryRun[] = [];
+  for (const r of value.run_list) {
+    if (!isObj(r) || typeof r.run_id !== "string" || typeof r.run_date !== "string" || !Array.isArray(r.stops)) return null;
+    const stops: HistoryStop[] = [];
+    for (const st of r.stops) {
+      if (!isObj(st) || typeof st.order_number !== "number" || (st.outcome !== "delivered" && st.outcome !== "failed")) return null;
+      stops.push({ order_number: st.order_number, outcome: st.outcome, reason: typeof st.reason === "string" ? st.reason : null, at: typeof st.at === "string" ? st.at : "" });
+    }
+    run_list.push({
+      run_id: r.run_id,
+      run_date: r.run_date,
+      departure_time: typeof r.departure_time === "string" ? r.departure_time : null,
+      departed_at: typeof r.departed_at === "string" ? r.departed_at : null,
+      finished_at: typeof r.finished_at === "string" ? r.finished_at : null,
+      stops,
+    });
+  }
+  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return { month: value.month, delivered: n(value.delivered), failed: n(value.failed), runs: n(value.runs), days: n(value.days), run_list };
+}
+
+/** "2026-09-12" -> "12.9" (day.month). */
+export function shortDate(isoDate: string): string {
+  const [, m, d] = isoDate.split("-").map(Number);
+  return m && d ? `${d}.${m}` : isoDate;
+}

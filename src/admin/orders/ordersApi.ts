@@ -164,6 +164,17 @@ export async function transitionOrder(
   }
 }
 
+/** The run an order travelled in (who drove it, when it left) — for the order's detail panel. */
+export async function loadRunDetail(client: SupabaseClient, runId: string): Promise<ApiResult<RunRow | null>> {
+  try {
+    const { data, error } = await client.from("delivery_runs").select(RUN_COLUMNS).eq("id", runId).maybeSingle();
+    if (error) return fail(error);
+    return { ok: true, data: (data as unknown as RunRow | null) ?? null };
+  } catch (e) {
+    return unexpected(e);
+  }
+}
+
 /** Back office lets go of a run's courier (one who did not show up). Never after the run has left. */
 export async function releaseDeliveryRun(client: SupabaseClient, runId: string): Promise<ApiResult<{ changed: boolean }>> {
   try {

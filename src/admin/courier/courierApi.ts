@@ -49,5 +49,6 @@ export const releaseRun = (client: SupabaseClient, runId: string) => call(client
 export const departRun = (client: SupabaseClient, runId: string) => call(client, "depart_delivery_run", { p_run_id: runId });
 export const completeStop = (client: SupabaseClient, orderId: string, idChecked: boolean) =>
   call(client, "complete_delivery_stop", { p_order_id: orderId, p_id_checked: idChecked });
-export const failStop = (client: SupabaseClient, orderId: string, reason: string) =>
-  call(client, "fail_delivery_stop", { p_order_id: orderId, p_reason: reason });
+/** `pay`: true = the customer's fault (the courier is paid), false = not paid, null = the owner decides (migration 0018). */
+export const failStop = (client: SupabaseClient, orderId: string, reason: string, pay: boolean | null = null) =>
+  call(client, "fail_delivery_stop", { p_order_id: orderId, p_reason: reason, p_pay: pay });

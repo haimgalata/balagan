@@ -16,6 +16,8 @@ import { ScanPage } from "@/admin/costs/ScanPage";
 import { COSTS_PATH, SCAN_PATH } from "@/admin/costs/costsRoute";
 import { ORDERS_PATH, isOrdersPath } from "@/admin/orders/ordersRoute";
 import { CourierPage } from "@/admin/courier/CourierPage";
+import { CouriersPage } from "@/admin/couriers/CouriersPage";
+import { COURIERS_PATH } from "@/admin/couriers/couriersRoute";
 import { COURIER_PATH } from "@/admin/courier/courierRoute";
 import type { AdminRole } from "@/admin/useAdminSession";
 
@@ -48,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "קופונים", path: COUPONS_PATH, enabled: true, ownerOnly: true },
   { label: "עלויות ורווח", path: COSTS_PATH, enabled: true, ownerOnly: true },
   { label: "סריקה", path: SCAN_PATH, enabled: true, ownerOnly: true },
+  { label: "שכר שליחים", path: COURIERS_PATH, enabled: true, ownerOnly: true },
   { label: "הגדרות עסק", path: `${ADMIN_ROOT}/settings`, enabled: true, ownerOnly: true },
   { label: "שליח", path: COURIER_PATH, enabled: true, ownerOnly: false, courierOnly: true },
 ];
@@ -226,6 +229,8 @@ export function AdminShell({ email, role, courier = role === "courier", client, 
           <CostsPage client={client} />
         ) : path === SCAN_PATH ? (
           <ScanPage client={client} />
+        ) : path === COURIERS_PATH ? (
+          <CouriersPage client={client} />
         ) : path === `${ADMIN_ROOT}/settings` ? (
           <BusinessSettingsPage client={client} />
         ) : (

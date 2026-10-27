@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, Phone } from "lucide-react";
 import type { AdminRole } from "@/admin/useAdminSession";
-import { loadOrderDetail } from "@/admin/orders/ordersApi";
+import { loadOrderDetail, loadRunDetail } from "@/admin/orders/ordersApi";
+import { RUN_STATUS_LABEL, runDepartureLabel, telHref, type RunRow } from "@/admin/orders/runModel";
 import type { OrderError } from "@/admin/orders/ordersErrors";
 import { OrderActionBar } from "@/admin/orders/OrderActionBar";
 import type { OrderActions } from "@/admin/orders/useOrderActions";
@@ -68,6 +69,47 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dt className="text-xs text-brand-text-muted">{label}</dt>
       <dd className="mt-0.5 text-sm text-brand-text">{children}</dd>
     </div>
+  );
+}
+
+/**
+ * Who delivered this order (migration 0017): the courier's name and phone as copied onto the run when he took it, the run's
+ * slot and when it left. Stays after the run is over — if a delivery ever has a problem, this is who to call.
+ */
+function CourierCard({ client, runId, version }: { client: SupabaseClient; runId: string; version: number }) {
+  const [run, setRun] = useState<RunRow | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadRunDetail(client, runId).then((result) => {
+      if (!cancelled && result.ok) setRun(result.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, runId, version]);
+  if (!run) return null;
+  return (
+    <section aria-label="שליח" data-testid="courier-card" className="rounded-md border border-brand-border bg-brand-bg-elevated px-3 py-2.5 text-sm">
+      <h4 className="mb-1 text-xs text-brand-text-muted">שליח</h4>
+      {run.courier_name ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="font-medium text-brand-text">{run.courier_name}</span>
+          {run.courier_phone && (
+            <a href={telHref(run.courier_phone)} className="inline-flex items-center gap-1.5 text-brand-gold" aria-label={`חיוג ל${run.courier_name}`}>
+              <Phone size={14} aria-hidden="true" />
+              <span dir="ltr">{run.courier_phone}</span>
+            </a>
+          )}
+        </div>
+      ) : (
+        <p className="text-brand-text-muted">עדיין לא נלקחה על ידי שליח</p>
+      )}
+      <p className="mt-1 text-xs text-brand-text-muted">
+        ריצת {runDepartureLabel(run)} · {RUN_STATUS_LABEL[run.status]}
+        {run.claimed_at ? ` · נלקחה ${formatDateTime(run.claimed_at)}` : ""}
+        {run.departed_at ? ` · יצאה ${formatDateTime(run.departed_at)}` : ""}
+      </p>
+    </section>
   );
 }
 
@@ -145,6 +187,8 @@ export function OrderDetailContent({ client, orderKey, role, actions, version }:
           שולם בכרטיס אשראי אך ההזמנה לא פעילה — נדרש טיפול ידני (החזר כספי).
         </p>
       )}
+
+      {order.delivery_run_id && <CourierCard client={client} runId={order.delivery_run_id} version={version} />}
 
       <OrderActionBar order={order} role={role} actions={actions} />
       {actions.error && (

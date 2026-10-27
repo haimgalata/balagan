@@ -612,6 +612,45 @@ async function deliveryChecks() {
 }
 
 /**
+ * Part 2e — what each courier is owed (migration 0018). Owner only, end to end: the pay tables are closed to the API (not even the
+ * owner reads them directly), and the five admin_* functions refuse everyone who is not the owner.
+ */
+async function courierPayChecks() {
+  let r = await rpc("admin_courier_payroll", adminToken, { p_month: new Date().toISOString().slice(0, 7) + "-01" });
+  if (r.status === 404 || pgCode(r) === "PGRST202") {
+    skipped.push("courier pay (apply supabase/migrations/0018_courier_pay.sql, then re-run)");
+    section("Courier pay  --  SKIPPED: migration 0018 is not applied yet");
+    return;
+  }
+  section("Courier pay (migration 0018) — owner only");
+  check("the owner gets the payroll", r.status === 200 && Array.isArray(r.json?.couriers) && typeof r.json?.default_rate_cents === "number", brief(r));
+  const month = new Date().toISOString().slice(0, 7) + "-01";
+  for (const t of ["delivery_pay", "courier_payouts"]) {
+    r = await rest("GET", `${t}?select=*&limit=1`, { token: adminToken });
+    check(`even the owner cannot read ${t} through the table API (only through the payroll function)`, deniedOrEmpty(r), brief(r));
+  }
+  const who = [["anon", ANON], ...(userToken ? [["an ordinary logged-in user", userToken]] : []), ...(staffToken ? [["staff", staffToken]] : []), ...(courierToken ? [["a courier", courierToken]] : [])];
+  for (const [name, token] of who) {
+    r = await rpc("admin_courier_payroll", token, { p_month: month });
+    check(`${name} cannot read the payroll`, refused(r), brief(r));
+    r = await rpc("admin_set_courier_pay", token, { p_order_id: randomUUID(), p_pay_cents: 99999 });
+    check(`${name} cannot set what a delivery pays`, refused(r), brief(r));
+    r = await rpc("admin_set_courier_rate", token, { p_user_id: randomUUID(), p_cents: 99999 });
+    check(`${name} cannot set a courier's rate`, refused(r), brief(r));
+    r = await rpc("admin_record_courier_payout", token, { p_courier_id: randomUUID(), p_month: month, p_amount_cents: 100, p_note: null });
+    check(`${name} cannot record a payout`, refused(r), brief(r));
+    r = await rest("PATCH", "business_settings?id=eq.1", { token, body: { courier_pay_cents: 99999 } });
+    check(`${name} cannot change the default rate`, deniedOrEmpty(r) || refused(r), brief(r));
+  }
+  r = await rpc("admin_set_courier_pay", adminToken, { p_order_id: randomUUID(), p_pay_cents: 100 });
+  check("the owner setting the pay of an order that has none is refused (NO_PAY_RECORD)", r.status >= 400 && /NO_PAY_RECORD/.test(r.text), brief(r));
+  r = await rpc("admin_set_courier_rate", adminToken, { p_user_id: randomUUID(), p_cents: 100 });
+  check("...and a rate for someone who is not a courier (NOT_A_COURIER)", r.status >= 400 && /NOT_A_COURIER/.test(r.text), brief(r));
+  r = await call("POST", `${URL_}/rest/v1/rpc/get_business_settings`, { body: {} });
+  check("the public settings carry no courier rate", r.status === 200 && !/courier_pay|pay_per/.test(r.text), `HTTP ${r.status}`);
+}
+
+/**
  * Part 3 (opt-in: --signups-enabled) — for AFTER public sign-ups are switched on. Instead of expecting self-registration
  * to be refused, proves a freshly self-registered user has no power at all. NOTE: it creates a throwaway, unconfirmed
  * user that this script cannot delete (no service-role key, by design) — remove it in Authentication -> Users.
@@ -1414,6 +1453,7 @@ async function main() {
   await couponChecks();
   await costChecks();
   await deliveryChecks();
+  await courierPayChecks();
 
   // ------------------------------------------------------------------- 6. sign-ups
   if (SIGNUPS_ENABLED) {

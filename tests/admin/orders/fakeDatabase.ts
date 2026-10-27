@@ -410,10 +410,13 @@ export function createFakeOrdersDatabase(initial: FakeOrder[] = [], options: Fak
     if (runsTable) {
       if (role !== "owner" && role !== "staff") { await json(200, []); return true; }
       const statuses = /^in\.\((.*)\)$/.exec(url.searchParams.get("status") ?? "")?.[1]?.split(",");
-      await json(200, runs.filter((r) => !statuses || statuses.includes(r.status)).map((r) => {
+      const wantedId = /^eq\.(.*)$/.exec(url.searchParams.get("id") ?? "")?.[1];
+      const shaped = runs.filter((r) => (!statuses || statuses.includes(r.status)) && (!wantedId || r.id === wantedId)).map((r) => {
         const { departure_time, ...rest } = r;
         return { ...rest, delivery_windows: { departure_time } };
-      }));
+      });
+      const asObject = /vnd\.pgrst\.object/.test(ctx.headers["accept"] ?? "");
+      await json(200, asObject ? shaped[0] ?? null : shaped);
       return true;
     }
 

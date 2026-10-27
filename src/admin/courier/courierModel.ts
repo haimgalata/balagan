@@ -157,6 +157,19 @@ export const canRelease = (run: Pick<MyRun, "status">): boolean => run.status ==
 export const amountToCollectCents = (s: Pick<Stop, "payment_method" | "payment_status" | "total_cents">): number =>
   s.payment_method === "cash" && s.payment_status !== "paid" ? s.total_cents : 0;
 
+const CUSTOMER_FAULT_REASONS = ["הלקוח לא היה בבית / לא ענה", "לא הוצגה תעודה מזהה", "מקבל המשלוח מתחת לגיל 18", "הלקוח סירב לקבל"] as const;
+
+/** A stop still to be handed over (packed, or on the road). */
+export const isOpenStop = (s: Pick<Stop, "order_status">): boolean => s.order_status === "ready_for_dispatch" || s.order_status === "out_for_delivery";
+
+/**
+ * Whether a failed delivery is paid, from the reason the courier chose: the customer's fault (not home, no ID, under 18,
+ * refused) is paid; the rest ("address not found", "other") is left to the owner (null) — he decides in the payroll screen.
+ */
+export function failPaysCourier(reason: string): boolean | null {
+  return (CUSTOMER_FAULT_REASONS as readonly string[]).includes(reason) ? true : null;
+}
+
 export const FAIL_REASONS = [
   "הלקוח לא היה בבית / לא ענה",
   "לא הוצגה תעודה מזהה",

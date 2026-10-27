@@ -64,6 +64,8 @@ await db.exec(file("0016_costs.sql"));
 await db.exec(file("0016_costs.sql")); // re-runnable
 await db.exec(file("0017_delivery.sql"));
 await db.exec(file("0017_delivery.sql")); // re-runnable
+await db.exec(file("0018_courier_pay.sql"));
+await db.exec(file("0018_courier_pay.sql")); // re-runnable
 await db.exec(file("0002_rls.sql"));               // re-running 0002 must not widen is_admin()
 await db.exec(`
   insert into auth.users (id, email) values ('${COURIER}','courier@x.test'), ('${COURIER2}','courier2@x.test');
@@ -310,7 +312,9 @@ const GUARDED_ADMIN = ["is_admin", "is_staff", "get_my_role", "expire_stale_orde
   "admin_set_product_cost", "admin_cost_overview",
   // delivery (0017): each checks the caller's own role (courier / back-office) inside itself
   "is_courier", "get_my_access", "courier_list_open_runs", "courier_my_runs", "claim_delivery_run", "release_delivery_run",
-  "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop"];
+  "depart_delivery_run", "complete_delivery_stop", "fail_delivery_stop",
+  // courier pay (0018): each re-checks is_admin() (owner only) inside itself
+  "admin_courier_payroll", "admin_set_courier_pay", "admin_set_courier_rate", "admin_record_courier_payout", "admin_delete_courier_payout"];
 // Member-facing (0012): each reads auth.uid() itself, returns only the caller's own data, and is revoked from anon.
 const MEMBER_RPCS = ["get_my_customer", "claim_guest_orders", "join_club", "get_my_orders", "set_marketing_consent", "delete_my_account",
   // coupons (0014): checks the caller's own membership itself, refuses everyone else; revoked from anon
@@ -1166,6 +1170,87 @@ check("with every window switched off, delivery works as before (no window, prep
   !!L.order_id && (await tr(asStaff, L.order_id, "confirmed", "preparing")).ok && (await tr(asStaff, L.order_id, "preparing", "out_for_delivery")).ok
   && (await tr(asStaff, L.order_id, "out_for_delivery", "completed")).ok);
 check("the owner cannot delete a window that already has runs", !(await asOwner(`delete from public.delivery_windows where id='${W1}'`)).ok);
+
+// ---- what each courier is owed (migration 0018) --------------------------------------------------------------
+console.log("\nCourier pay (0018)");
+const month = (await su(`select date_trunc('month', now() at time zone 'Asia/Jerusalem')::date::text m`))[0].m;
+const payroll = async () => (await asOwner(`select public.admin_courier_payroll($1::date) as p`, [month])).rows[0].p;
+const cRow = async (p) => p.couriers.find((c) => c.courier_id === COURIER);
+await su(`update public.delivery_windows set is_active = true`);
+const before0018 = await cRow(await payroll());
+check("deliveries closed before any rate was set are credited 0; a failed one with no decision waits for the owner",
+  before0018.delivered === 1 && before0018.failed === 1 && before0018.pending === 1 && before0018.pay_cents === 0, JSON.stringify(before0018));
+check("the courier appears with his name and phone, and the default rate is 0 until the owner sets one",
+  before0018.name === "דני השליח" && before0018.phone === "0501234567" && before0018.rate_cents === 0);
+
+check("the owner sets the default rate (₪12); staff and couriers cannot",
+  (await asOwner(`update public.business_settings set courier_pay_cents = 1200 where id = 1 returning 1`)).rows?.length === 1
+  && ((await asStaff(`update public.business_settings set courier_pay_cents = 1 where id = 1 returning 1`)).rows ?? []).length === 0
+  && ((await asCourier(`update public.business_settings set courier_pay_cents = 1 where id = 1 returning 1`)).rows ?? []).length === 0);
+check("a negative default rate is refused", !(await asOwner(`update public.business_settings set courier_pay_cents = -1 where id = 1`)).ok);
+
+// a run with three stops: delivered, failed (the customer's fault -> paid), failed (left to the owner)
+const P1 = await winOrder(W1, { street: "הרצל", house: "21" }), P2 = await winOrder(W1, { street: "הרצל", house: "22" }), P3 = await winOrder(W1, { street: "הרצל", house: "23" });
+for (const o of [P1, P2, P3]) { await tr(asStaff, o.order_id, "confirmed", "preparing"); await tr(asStaff, o.order_id, "preparing", "ready_for_dispatch"); }
+const payRun = (await order(P1.order_id)).delivery_run_id;
+await asCourier(`select public.claim_delivery_run('${payRun}')`);
+await asCourier(`select public.depart_delivery_run('${payRun}')`);
+const payOf = async (id) => (await su(`select * from public.delivery_pay where order_id = $1`, [id]))[0];
+await asCourier(`select public.complete_delivery_stop('${P1.order_id}', true)`);
+await asCourier(`select public.fail_delivery_stop('${P2.order_id}', 'לא הוצגה תעודה מזהה', true)`);
+await asCourier(`select public.fail_delivery_stop('${P3.order_id}', 'הכתובת לא נמצאה')`);
+check("a delivered stop is credited the rate in force (₪12) and the run's courier gets it",
+  (await payOf(P1.order_id)).pay_cents === 1200 && (await payOf(P1.order_id)).courier_id === COURIER && (await payOf(P1.order_id)).outcome === "delivered");
+check("a failure that is the customer's fault (p_pay true) is paid; p_pay false pays nothing; no answer waits for the owner",
+  (await payOf(P2.order_id)).pay_cents === 1200 && (await payOf(P3.order_id)).pay_cents === null && (await payOf(P3.order_id)).reason === "הכתובת לא נמצאה");
+const P4 = await winOrder(W1, { street: "הרצל", house: "24" });
+await tr(asStaff, P4.order_id, "confirmed", "preparing"); await tr(asStaff, P4.order_id, "preparing", "ready_for_dispatch");
+const run4 = (await order(P4.order_id)).delivery_run_id;
+await asCourier(`select public.claim_delivery_run('${run4}')`); await asCourier(`select public.depart_delivery_run('${run4}')`);
+await asCourier(`select public.fail_delivery_stop('${P4.order_id}', 'הלקוח סירב לקבל', false)`);
+check("p_pay false pays nothing", (await payOf(P4.order_id)).pay_cents === 0);
+
+check("a per-courier rate overrides the default; only the owner sets it; clearing it returns to the default",
+  (await asOwner(`select public.admin_set_courier_rate('${COURIER}', 2000)`)).ok
+  && !(await asStaff(`select public.admin_set_courier_rate('${COURIER}', 1)`)).ok && !(await asCourier(`select public.admin_set_courier_rate('${COURIER}', 1)`)).ok
+  && !(await asOwner(`select public.admin_set_courier_rate('${PLAIN}', 100)`)).ok && !(await asOwner(`select public.admin_set_courier_rate('${COURIER}', -5)`)).ok
+  && (await su(`select public.courier_rate_cents('${COURIER}') r`))[0].r === 2000);
+const P5 = await winOrder(W1, { street: "הרצל", house: "25" });
+await tr(asStaff, P5.order_id, "confirmed", "preparing"); await tr(asStaff, P5.order_id, "preparing", "ready_for_dispatch");
+const run5 = (await order(P5.order_id)).delivery_run_id;
+await asCourier(`select public.claim_delivery_run('${run5}')`); await asCourier(`select public.depart_delivery_run('${run5}')`);
+await asCourier(`select public.complete_delivery_stop('${P5.order_id}', true)`);
+check("the new rate applies to the next delivery (₪20) and a past delivery keeps what it was frozen at (₪12)",
+  (await payOf(P5.order_id)).pay_cents === 2000 && (await payOf(P1.order_id)).pay_cents === 1200);
+
+let payrollRow = await cRow(await payroll());
+check("payroll: 2 delivered + failed ones, runs, and the total owed (the pending one counts 0 until decided)",
+  payrollRow.delivered === 3 && payrollRow.failed === 4 && payrollRow.pending === 2 && payrollRow.pay_cents === 1200 + 1200 + 2000 && payrollRow.runs >= 3 && payrollRow.rows.length === 7, JSON.stringify({ d: payrollRow.delivered, f: payrollRow.failed, p: payrollRow.pending, pay: payrollRow.pay_cents, runs: payrollRow.runs, rows: payrollRow.rows.length }));
+check("each row carries the order, outcome, reason and what it pays", payrollRow.rows.every((r) => r.order_number && r.outcome && "pay_cents" in r));
+check("the owner decides a pending failure (₪6); an invalid amount or an unknown order is refused",
+  (await asOwner(`select public.admin_set_courier_pay('${P3.order_id}', 600)`)).ok
+  && !(await asOwner(`select public.admin_set_courier_pay('${P3.order_id}', -1)`)).ok
+  && !(await asOwner(`select public.admin_set_courier_pay('${randomUUID()}', 100)`)).ok);
+payrollRow = await cRow(await payroll());
+check("...it leaves the pending list and joins the total", payrollRow.pending === 1 && payrollRow.pay_cents === 4400 + 600);
+check("the owner records a payout; the screen can show what is left; a mistake can be deleted",
+  (await asOwner(`select public.admin_record_courier_payout('${COURIER}', $1::date, 3000, 'העברה בנקאית')`, [month])).ok
+  && (await cRow(await payroll())).paid_cents === 3000
+  && !(await asOwner(`select public.admin_record_courier_payout('${COURIER}', $1::date, 0, null)`, [month])).ok);
+const payoutId = (await cRow(await payroll())).payouts[0].id;
+check("deleting the payout puts it back", (await asOwner(`select public.admin_delete_courier_payout(${payoutId})`)).ok && (await cRow(await payroll())).paid_cents === 0);
+
+for (const [who, name] of [[asStaff, "staff"], [asCourier, "a courier"], [asPlain, "a customer"], [asAnon, "anonymous"]]) {
+  check(`${name} cannot read the payroll or change a pay`,
+    !(await who(`select public.admin_courier_payroll($1::date)`, [month])).ok && !(await who(`select public.admin_set_courier_pay('${P3.order_id}', 99999)`)).ok
+    && !(await who(`select public.admin_record_courier_payout('${COURIER}', $1::date, 1, null)`, [month])).ok);
+}
+for (const t of ["delivery_pay", "courier_payouts"]) {
+  const reads = await Promise.all([asOwner, asStaff, asCourier, asPlain].map((w) => w(`select * from public.${t}`)));
+  check(`nobody reads ${t} through the table API (owner included — only admin_courier_payroll)`, reads.every((r) => !r.ok || r.rows.length === 0));
+}
+check("the public settings carry no courier rate", !/courier|pay_/.test(JSON.stringify((await asAnon(`select public.get_business_settings() as s`)).rows[0].s)));
+check("a courier cannot read other people's rates (admin_users: own row only)", ((await asCourier(`select user_id from public.admin_users`)).rows ?? []).length === 1);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

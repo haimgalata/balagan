@@ -9,6 +9,8 @@ import {
   canDepart,
   canRelease,
   FAIL_REASONS,
+  failPaysCourier,
+  isOpenStop,
   runProgress,
   stopAddress,
   stopDetails,
@@ -36,16 +38,20 @@ function StopCard({
   stop,
   index,
   onRoad,
+  isNext,
   busy,
   onDeliver,
   onFail,
 }: {
   stop: Stop;
+  /** the stop's place in the route (stays the same when it moves to the "done" part of the list) */
   index: number;
   onRoad: boolean;
+  /** the next stop to hand over — highlighted so the courier always sees what comes now */
+  isNext: boolean;
   busy: boolean;
   onDeliver: (idChecked: boolean) => Promise<boolean>;
-  onFail: (reason: string) => Promise<boolean>;
+  onFail: (reason: string, pay: boolean | null) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<"deliver" | "fail" | null>(null);
   const [idChecked, setIdChecked] = useState(false);
@@ -56,8 +62,22 @@ function StopCard({
   const badge = STOP_BADGE[stop.order_status];
   const finalReason = reason === "אחר" ? otherText.trim() : reason;
 
+  // A stop that is already handed over shrinks to one line: what is left to do must stand out.
+  if (stop.order_status === "completed") {
+    return (
+      <li data-testid="courier-stop" data-order-number={stop.order_number} data-status={stop.order_status} className="flex items-center justify-between gap-2 rounded-lg border border-brand-border/60 bg-brand-bg px-3 py-2 text-sm text-brand-text-muted">
+        <span className="flex items-center gap-2">
+          <Check size={16} className="text-brand-success" aria-hidden="true" />
+          {index + 1}. {stopAddress(stop)} · #{stop.order_number}
+        </span>
+        <span className="text-xs text-brand-success">נמסרה</span>
+      </li>
+    );
+  }
+
   return (
-    <li data-testid="courier-stop" data-order-number={stop.order_number} data-status={stop.order_status} className="rounded-xl border border-brand-border bg-brand-bg-elevated p-3">
+    <li data-testid="courier-stop" data-order-number={stop.order_number} data-status={stop.order_status} data-next={isNext || undefined} className={`rounded-xl border bg-brand-bg-elevated p-3 ${isNext ? "border-brand-gold ring-1 ring-brand-gold/60" : "border-brand-border"}`}>
+      {isNext && <p className="mb-1 text-xs font-semibold text-brand-gold">העצירה הבאה</p>}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border text-xs font-semibold text-brand-text-muted">{index + 1}</span>
@@ -148,7 +168,7 @@ function StopCard({
               variant="secondary"
               className="flex-1 !py-3"
               disabled={finalReason === "" || busy}
-              onClick={() => void onFail(finalReason).then((ok) => ok && setMode(null))}
+              onClick={() => void onFail(finalReason, failPaysCourier(reason)).then((ok) => ok && setMode(null))}
             >
               {busy && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
               אישור — לא נמסר
@@ -178,6 +198,10 @@ function MyRunCard({
   const progress = runProgress(run);
   const onRoad = run.status === "departed";
   const runBusy = busyKey === run.id;
+  // What is left comes first, in route order; what is done sinks to the bottom (numbers keep their route position).
+  const numbered = run.stops.map((stop, index) => ({ stop, index }));
+  const ordered = [...numbered.filter((s) => isOpenStop(s.stop)), ...numbered.filter((s) => !isOpenStop(s.stop))];
+  const nextId = onRoad ? ordered.find((s) => s.stop.order_status === "out_for_delivery")?.stop.order_id : undefined;
 
   return (
     <section aria-label={`ריצת ${timeLabel(run.departure_time)}`} data-testid="my-run" data-run-status={run.status} className="space-y-3 rounded-2xl border border-brand-gold/50 p-3">
@@ -202,15 +226,16 @@ function MyRunCard({
       )}
 
       <ol className="space-y-3">
-        {run.stops.map((stop, index) => (
+        {ordered.map(({ stop, index }) => (
           <StopCard
             key={stop.order_id}
             stop={stop}
             index={index}
             onRoad={onRoad}
+            isNext={stop.order_id === nextId}
             busy={busyKey === stop.order_id}
             onDeliver={(idChecked) => act(stop.order_id, () => completeStop(client, stop.order_id, idChecked))}
-            onFail={(reason) => act(stop.order_id, () => failStop(client, stop.order_id, reason))}
+            onFail={(reason, pay) => act(stop.order_id, () => failStop(client, stop.order_id, reason, pay))}
           />
         ))}
       </ol>
@@ -262,6 +287,8 @@ export function CourierPage({ client }: { client: SupabaseClient }) {
   const { data, error, refresh } = useCourierRuns(client);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const activeRuns = data?.mine.filter((run) => run.status !== "finished") ?? [];
+  const finishedRuns = data?.mine.filter((run) => run.status === "finished") ?? [];
 
   const act = async (key: string, fn: () => Promise<CourierResult<{ changed: boolean }>>): Promise<boolean> => {
     setBusyKey(key);
@@ -294,21 +321,21 @@ export function CourierPage({ client }: { client: SupabaseClient }) {
 
       {data && (
         <>
-          <section aria-label="הריצות שלי" className="space-y-3">
-            <h2 className="text-base font-semibold text-brand-text">הריצות שלי</h2>
-            {data.mine.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-brand-border p-4 text-center text-sm text-brand-text-muted">
-                אין לך ריצה כרגע. אפשר לקחת אחת מהריצות הפתוחות.
-              </p>
-            ) : (
-              data.mine.map((run) => <MyRunCard key={run.id} client={client} run={run} busyKey={busyKey} act={act} />)
-            )}
-          </section>
+          {activeRuns.length > 0 && (
+            <section aria-label="הריצה שלי עכשיו" className="space-y-3">
+              <h2 className="text-base font-semibold text-brand-text">הריצה שלי עכשיו</h2>
+              {activeRuns.map((run) => (
+                <MyRunCard key={run.id} client={client} run={run} busyKey={busyKey} act={act} />
+              ))}
+            </section>
+          )}
 
           <section aria-label="ריצות פתוחות" className="space-y-3">
-            <h2 className="text-base font-semibold text-brand-text">ריצות פתוחות</h2>
+            <h2 className="text-base font-semibold text-brand-text">{activeRuns.length === 0 ? "ריצות פתוחות — לקחת" : "ריצות נוספות פתוחות"}</h2>
             {data.open.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-brand-border p-4 text-center text-sm text-brand-text-muted">אין ריצות שמחכות לשליח.</p>
+              <p className="rounded-lg border border-dashed border-brand-border p-4 text-center text-sm text-brand-text-muted">
+                {activeRuns.length === 0 ? "אין לך ריצה כרגע, ואין ריצות שמחכות לשליח." : "אין ריצות נוספות שמחכות לשליח."}
+              </p>
             ) : (
               <ul className="space-y-3">
                 {data.open.map((run) => (
@@ -317,6 +344,17 @@ export function CourierPage({ client }: { client: SupabaseClient }) {
               </ul>
             )}
           </section>
+
+          {finishedRuns.length > 0 && (
+            <details className="rounded-xl border border-brand-border bg-brand-bg-elevated" data-testid="finished-runs">
+              <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-brand-text">הושלמו היום ({finishedRuns.length})</summary>
+              <div className="space-y-3 p-3 pt-0">
+                {finishedRuns.map((run) => (
+                  <MyRunCard key={run.id} client={client} run={run} busyKey={busyKey} act={act} />
+                ))}
+              </div>
+            </details>
+          )}
         </>
       )}
     </div>

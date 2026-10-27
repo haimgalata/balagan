@@ -2,6 +2,7 @@ import { test, expect } from "../catalog/fixtures";
 import { ADMIN_USER, COURIER_USER, seedSession, sessionFor, stubSupabase, type StubRequestContext, type StubUser } from "./auth/adminStubs";
 import { FAKE_COURIER_NAME, FAKE_COURIER_PHONE, createFakeOrdersDatabase, makeOrder } from "./orders/fakeDatabase";
 import { createFakeCustomers } from "./customers/fakeDatabase";
+import { createFakeCouriers, makeDelivery } from "./couriers/fakeDatabase";
 import { createFakeCoupons } from "./coupons/fakeDatabase";
 import { createFakeCosts } from "./costs/fakeDatabase";
 import { createFakeDatabase as createSettingsDb } from "./settings/fakeDatabase";
@@ -71,13 +72,13 @@ test("the menu scrolls, every section is reachable and the current one is in vie
   await open(page, createFakeCustomers().handle, "/admin/customers");
   const nav = page.getByRole("navigation", { name: "ניווט ניהול" });
   const links = nav.getByRole("link");
-  await expect(links).toHaveCount(9);
+  await expect(links).toHaveCount(10);
   expect(await nav.evaluate((el) => el.scrollWidth > el.clientWidth), "the menu is wider than a phone and scrolls").toBe(true);
   const current = nav.getByRole("link", { name: "לקוחות" });
   const inView = async (name: string) => nav.getByRole("link", { name }).evaluate((el) => { const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= document.documentElement.clientWidth + 1; }); // 1px: sub-pixel layout
   expect(await inView("לקוחות"), "the current section is scrolled into view").toBe(true);
   await expect(current).toHaveAttribute("aria-current", "page");
-  for (const name of ["ראשי", "הזמנות", "קטגוריות", "מוצרים", "קופונים", "עלויות ורווח", "סריקה", "הגדרות עסק"]) {
+  for (const name of ["ראשי", "הזמנות", "קטגוריות", "מוצרים", "קופונים", "עלויות ורווח", "סריקה", "שכר שליחים", "הגדרות עסק"]) {
     await nav.getByRole("link", { name }).scrollIntoViewIfNeeded();
     expect(await inView(name), `${name} can be scrolled to`).toBe(true);
   }
@@ -225,5 +226,20 @@ test("the delivery windows editor fits a phone", async ({ page }) => {
   );
   await open(page, db.handle, "/admin/settings");
   await expect(page.getByTestId("window-row").first()).toBeVisible();
+  await noOverflow(page);
+});
+
+test("the courier-pay screen fits a phone", async ({ page }) => {
+  const db = createFakeCouriers([
+    {
+      courier_id: "00000000-0000-0000-0000-0000000000d1", name: "דני השליח", phone: "0501234567", email: "danny@example.test", active: true, rate_override_cents: 1500,
+      deliveries: [makeDelivery(1101), makeDelivery(1102, { outcome: "failed", reason: "לא הוצגה תעודה מזהה וגם הלקוח סירב לפתוח את הדלת", pay_cents: null })],
+      payouts: [{ id: 1, amount_cents: 1000, note: "העברה בנקאית", created_at: "2026-09-30T09:00:00.000Z" }],
+    },
+  ]);
+  await open(page, db.handle, "/admin/couriers");
+  await expect(page.getByTestId("courier-pay")).toBeVisible();
+  await noOverflow(page);
+  await page.getByTestId("pay-row").first().getByRole("button", { name: "סכום אחר" }).click();
   await noOverflow(page);
 });
